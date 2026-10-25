@@ -17,6 +17,9 @@ transaction. You check the suggestions, then post them as journal entries.
   statements don't post anything twice. Nothing is posted until you press **Post**.
 - Low-confidence suggestions are marked **Needs review**; **Select confident** + **Post selected**
   takes care of the rest.
+- **Bills from email:** checks a mailbox on a schedule (IMAP, read-only), reads bills and receipts
+  out of the emails and their PDFs, keeps a list of bills to be paid, and matches each bill to the
+  bank transaction that pays it. See [Bills](#bills).
 
 ## Install
 
@@ -53,6 +56,54 @@ transaction ID (or `categorizer <statement>/<row>`) as the reference.
 Money in → debit the statement account. Money out → credit it. So a purchase on a card
 (liability) account credits the card, and a deposit to chequing debits chequing.
 
+## Bills
+
+**Set up:** *Settings → Email*. Enter the IMAP server, user name and password, a folder (or Gmail
+label), and how often to check (0 turns scheduled checks off; **Check email now** on the Bills tab
+always works).
+
+| Provider | Server | Password |
+|---|---|---|
+| Gmail | `imap.gmail.com` | an [app password](https://myaccount.google.com/apppasswords) (needs 2-step verification) |
+| Outlook.com / Microsoft 365 | `outlook.office365.com` | your password, if IMAP and basic sign-in are allowed |
+| iCloud | `imap.mail.me.com` | an app-specific password |
+| Fastmail | `imap.fastmail.com` | an app password |
+| Proton Mail | Proton Bridge, e.g. `127.0.0.1` port `1143` | the Bridge password |
+
+Implicit TLS on port 993 is used, except for a bridge running on the same machine. The mailbox
+is opened read-only: nothing is marked as read, moved or deleted. To keep the password out of
+the database and its backups, set `CATEGORIZER_IMAP_PASSWORD=...` in `/etc/ledger/ledger.env`
+and restart Ledger.
+
+**What happens on each check:**
+1. New messages from the folder are read. The first check goes back 30 days (configurable).
+   Each message is looked at once.
+2. Only messages containing one of the keywords (invoice, bill, statement, amount due, receipt,
+   ...) go to the model. A mail filter that puts bills in their own folder or label keeps
+   everything else out.
+3. The model reads the email and its PDF attachment (PDFs need Claude; local models only see the
+   email text) and returns the vendor, invoice number, dates, amount and a suggested account.
+4. Reminders for a bill that's already listed (same vendor and invoice number, or same amount and
+   due date) are skipped.
+
+**Review on the Bills tab:** fix anything that's wrong, then **Approve**. You can also upload a
+bill (PDF or saved `.eml`) or add one by hand.
+
+**Accounting:**
+- *With an accounts payable account* (Settings → Email): approving a bill posts
+  Dr *bill's account* / Cr *payables* on the bill date. The bank payment later books
+  Dr *payables* / Cr *bank*.
+- *Without one:* bills are only tracked, and the payment books straight to the bill's account.
+- *Receipts* (already paid, e.g. an online order) are never posted on their own. They tell the
+  matching bank transaction which account to use.
+
+**Matching:** when a statement is categorised (or a new bill arrives), each unposted outgoing
+transaction with **exactly** a bill's amount, dated from a week before the bill date to 45 days
+after the due date (receipts: a few days around the purchase), is linked to it. A matching vendor
+name raises the confidence. Matched rows show **Bill nn%**, use the payables (or bill) account,
+and aren't sent to the model. Posting a matched row marks the bill **paid**. On a bill, **Not this
+one** unlinks a wrong match, and **This is the payment** links one by hand.
+
 ## API
 
 All routes are under `/api/v1/m/categorizer` and use your Ledger login.
@@ -69,12 +120,22 @@ All routes are under `/api/v1/m/categorizer` and use your Ledger login.
 | `POST` | `/suggest` | `{account_code, transactions: [{date, description, amount, memo?}]}` returns suggestions without storing anything (for scripts or other modules) |
 | `GET`/`DELETE` | `/rules`, `/rules/:key` | learned payee rules |
 | `GET`/`PUT` | `/settings`; `POST /settings/test` | provider settings (the API key is never returned) |
+| `GET`/`PUT` | `/mail/settings`; `POST /mail/test`, `POST /mail/check`, `GET /mail/log` | mailbox settings (the password is never returned), a connection test, a check now, the messages looked at |
+| `GET`/`POST` | `/bills?status=unpaid\|new\|open\|paid\|ignored`, `/bills` | list; add by hand `{vendor, amount, due_date, ...}` |
+| `POST` | `/bills/upload` | `{filename, content_base64}`: a PDF or `.eml` |
+| `GET`/`PATCH`/`DELETE` | `/bills/:id` | one bill with its payment; edit fields or `status`; delete |
+| `GET` | `/bills/:id/document` | the stored PDF, base64 |
+| `POST` | `/bills/:id/approve`, `/unapprove` | approve (posts to payables if configured); undo (reverses that entry) |
+| `GET`/`POST` | `/bills/:id/candidates`, `/match {transaction_id}`, `/unmatch` | manual matching |
 
 ## Privacy
 
 With Claude, each transaction's date, description, memo and amount, your account codes, names and
 descriptions, and descriptions of recent entries on the statement account are sent to the
-Anthropic API. With Ollama or another server on your network, nothing leaves it.
+Anthropic API. With email checks on, emails that pass the keyword filter (sender, subject, text
+and PDF attachments) are sent too. With Ollama or another server on your network, nothing leaves
+it. Emails that don't pass the filter are never sent anywhere. Bill PDFs and email text are stored
+in the Ledger database.
 
 ## Layout
 
@@ -84,6 +145,10 @@ server.mjs             routes, background categorisation, posting
 lib/parse.mjs          CSV / OFX parsing, amounts, dates, payee keys
 lib/categorize.mjs     prompt, schema, rules, batching
 lib/llm.mjs            Anthropic / Ollama / OpenAI-compatible clients (built-in fetch, no dependencies)
+lib/bill-routes.mjs    mailbox checks and schedule, bill routes, matching bills to transactions
+lib/bills.mjs          bill extraction prompt, duplicates, match scoring
+lib/imap.mjs           minimal read-only IMAP client
+lib/mime.mjs           email (MIME) parser
 ui/index.html          the page shown in Ledger
 migrations/            the module's tables (schema mod_categorizer)
 test/                  unit tests: npm test (Node 22+)

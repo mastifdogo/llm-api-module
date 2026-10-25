@@ -5,8 +5,12 @@
 // -> a background job asks the LLM for an account per transaction -> you
 // review on the module's page -> posting creates one journal entry per
 // transaction through ctx.ledger.createJournalEntry and teaches a payee rule.
+//
+// Bills (lib/bill-routes.mjs): a scheduled mailbox check turns bill emails
+// into bills; transactions that pay them are matched before the LLM is asked.
 
 import { createHash } from "node:crypto";
+import { registerBills } from "./lib/bill-routes.mjs";
 import { candidateAccounts, examplesFromEntries, suggest } from "./lib/categorize.mjs";
 import { DEFAULTS, LlmError, PROVIDERS, completeJson } from "./lib/llm.mjs";
 import { ParseError, parseAmount, parseDate, parseStatement, payeeKey } from "./lib/parse.mjs";
@@ -87,6 +91,8 @@ export default async function register(ctx) {
 		const { rows } = await q(`UPDATE ${T("statements")} SET status = 'categorizing', error = NULL WHERE id = $1 RETURNING account_code`, [id]);
 		if (rows.length === 0) return;
 		try {
+			// Payments of known bills don't need the model.
+			await bills.autoMatch();
 			const cfg = await readSettings();
 			const { account, accounts } = await statementAccount(rows[0].account_code);
 			const candidates = candidateAccounts(accounts, account);
@@ -94,7 +100,7 @@ export default async function register(ctx) {
 			const examples = await examplesFor(account, candidates, rules);
 			const { rows: txs } = await q(
 				`SELECT id, tx_date::text AS date, description, memo, amount_cents FROM ${T("transactions")}
-				  WHERE statement_id = $1 AND status = 'new' AND ($2 OR suggested_code IS NULL OR source = 'error')
+				  WHERE statement_id = $1 AND status = 'new' AND bill_id IS NULL AND ($2 OR suggested_code IS NULL OR source = 'error')
 				  ORDER BY line_no`,
 				[id, all],
 			);
@@ -127,6 +133,19 @@ export default async function register(ctx) {
 			throw err;
 		}
 	}
+
+	const bills = registerBills(ctx, {
+		q,
+		T,
+		bad,
+		readSettings,
+		requeue: async (ids) => {
+			for (const sid of ids) {
+				const { rowCount } = await q(`UPDATE ${T("statements")} SET status = 'queued' WHERE id = $1 AND status IN ('ready', 'error')`, [sid]);
+				if (rowCount > 0) enqueue(sid);
+			}
+		},
+	});
 
 	// Resume work interrupted by a restart (not awaited: register must finish quickly).
 	const { rows: unfinished } = await q(`SELECT id FROM ${T("statements")} WHERE status IN ('queued', 'categorizing') ORDER BY id`);
@@ -311,9 +330,11 @@ export default async function register(ctx) {
 	ctx.route("GET", "/statements/:id", async (req) => {
 		const statement = await getStatement(req.params.id);
 		const { rows } = await q(
-			`SELECT id, line_no, tx_date::text AS date, description, memo, amount_cents, fitid, suggested_code, confidence, reason, source,
-			        chosen_code, COALESCE(chosen_code, suggested_code) AS account_code, status, journal_entry_id, error, posted_by, posted_at
-			   FROM ${T("transactions")} WHERE statement_id = $1 ORDER BY line_no, id`,
+			`SELECT t.id, t.line_no, t.tx_date::text AS date, t.description, t.memo, t.amount_cents, t.fitid, t.suggested_code, t.confidence, t.reason, t.source,
+			        t.chosen_code, COALESCE(t.chosen_code, t.suggested_code) AS account_code, t.status, t.journal_entry_id, t.error, t.posted_by, t.posted_at,
+			        t.bill_id, b.vendor AS bill_vendor, b.status AS bill_status
+			   FROM ${T("transactions")} t LEFT JOIN ${T("bills")} b ON b.id = t.bill_id
+			  WHERE t.statement_id = $1 ORDER BY t.line_no, t.id`,
 			[statement.id],
 		);
 		const { review_threshold } = await readSettings();
@@ -397,7 +418,7 @@ export default async function register(ctx) {
 			// Claim the row so a double click cannot post it twice.
 			const claim = await q(
 				`UPDATE ${T("transactions")} SET status = 'posting' WHERE id = $1 AND status = 'new'
-				 RETURNING tx_date::text AS date, description, memo, amount_cents, fitid, account_code, COALESCE(chosen_code, suggested_code) AS code`,
+				 RETURNING tx_date::text AS date, description, memo, amount_cents, fitid, account_code, COALESCE(chosen_code, suggested_code) AS code, bill_id`,
 				[id],
 			);
 			if (claim.rowCount === 0) continue;
@@ -421,7 +442,9 @@ export default async function register(ctx) {
 					`UPDATE ${T("transactions")} SET status = 'posted', journal_entry_id = $2, posted_by = $3, posted_at = now(), error = NULL WHERE id = $1`,
 					[id, entry.id, req.user.username],
 				);
-				await learn(t.description, t.code, req.user.username);
+				// A bill payment marks the bill paid; it isn't a payee rule (it books to payables).
+				const paidBill = t.bill_id !== null && (await bills.onPosted(id, t.code, entry.id));
+				if (!paidBill) await learn(t.description, t.code, req.user.username);
 				results.posted++;
 			} catch (err) {
 				const msg = String(err?.message || err).slice(0, 500);
