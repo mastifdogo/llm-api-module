@@ -1,4 +1,4 @@
-# Statement Categorizer: a Ledger module
+# LLM API: a Ledger module
 
 A module for [Ledger (Bookeeping)](https://github.com/mastifdogo/Bookeeping). You upload a bank or
 credit-card statement and an LLM suggests an account from your chart of accounts for each
@@ -25,6 +25,11 @@ transaction. You check the suggestions, then post them as journal entries.
 
 Needs **Ledger 0.7.0 or newer** (for dashboard to-dos and notifications and the sidebar icon).
 
+The sidebar entry asks for the `robot` icon. Ledger versions whose icon set doesn't include it show
+the generic module icon instead. The module's id stays `categorizer` (its page is
+`/apps/categorizer` and its data lives in the `mod_categorizer` schema), so renaming it kept all
+existing data.
+
 1. Publish a release of this repository. Ledger installs the **latest GitHub Release**:
    bump `version` in `ledger-module.json`, then
    ```sh
@@ -32,9 +37,9 @@ Needs **Ledger 0.7.0 or newer** (for dashboard to-dos and notifications and the 
    ```
    and create a release from the tag on GitHub (not a draft or pre-release).
 2. In Ledger, open **Settings → Modules**, enter `mastifdogo/llm-api-module` and press **Add**.
-   **Categorize** appears in the sidebar (you can hide or reorder it under Settings → Sidebar).
+   **LLM API** appears in the sidebar with a robot icon (you can hide or reorder it under Settings → Sidebar).
    Updates install on Ledger's update schedule, or with **Update modules now**.
-3. Open **Categorize → Settings**:
+3. Open **LLM API → Settings**:
    - **Claude:** paste an Anthropic API key, or (to keep it out of the database and its backups)
      add `CATEGORIZER_API_KEY=sk-ant-...` to `/etc/ledger/ledger.env` and run
      `systemctl restart ledger`. The default model is `claude-opus-5-5` at low effort, which

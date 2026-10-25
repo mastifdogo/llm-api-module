@@ -1,4 +1,4 @@
-// Statement Categorizer: Ledger loads this file at startup and calls register(ctx).
+// LLM API (module id "categorizer"): Ledger loads this file at startup and calls register(ctx).
 // The module API is described in Ledger's docs/MODULES.md.
 //
 // Flow: upload a statement -> transactions are staged in this module's tables
@@ -529,5 +529,5 @@ export default async function register(ctx) {
 		};
 	});
 
-	ctx.log.info("categorizer ready", { resumed: unfinished.length });
+	ctx.log.info("LLM API module ready", { resumed: unfinished.length });
 }
