@@ -1,0 +1,53 @@
+# Copy to /etc/txcat/config.toml (chmod 640, owned by root:txcat).
+# Every key is optional; environment variables (TXCAT_*, ANTHROPIC_API_KEY) override this file.
+
+# "anthropic" (Claude API) or "ollama" (local model on your network)
+provider = "anthropic"
+# Empty = default for the provider: claude-opus-5-5 for anthropic, llama3.1:8b for ollama
+model = ""
+
+# Prefer putting the key in /etc/txcat/txcat.env as ANTHROPIC_API_KEY=... instead
+anthropic_api_key = ""
+
+# e.g. an Ollama LXC/VM on the same Proxmox host
+ollama_url = "http://localhost:11434"
+
+db_path = "/var/lib/txcat/txcat.db"
+host = "0.0.0.0"
+port = 8765
+# Strongly recommended: clients then send "Authorization: Bearer <token>"
+api_token = ""
+
+batch_size = 40
+review_threshold = 0.6
+memory_min_hits = 1
+timeout = 120.0
+
+# Your chart of accounts. Use the exact names your bookkeeping software uses so
+# suggestions can be applied directly. "Uncategorized" is always added.
+categories = [
+  "Income:Salary",
+  "Income:Interest",
+  "Income:Other",
+  "Expenses:Groceries",
+  "Expenses:Dining",
+  "Expenses:Fuel",
+  "Expenses:Transportation",
+  "Expenses:Utilities",
+  "Expenses:Internet & Phone",
+  "Expenses:Rent & Mortgage",
+  "Expenses:Insurance",
+  "Expenses:Healthcare",
+  "Expenses:Subscriptions",
+  "Expenses:Shopping",
+  "Expenses:Entertainment",
+  "Expenses:Travel",
+  "Expenses:Bank Fees",
+  "Expenses:Taxes",
+  "Expenses:Office & Software",
+  "Transfers",
+]
+
+# Free-text hints about your books, passed to the model with every request.
+extra_instructions = """
+"""
