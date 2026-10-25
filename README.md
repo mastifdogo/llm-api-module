@@ -1,114 +1,99 @@
-# txcat — LLM category suggestions for bookkeeping
+# Statement Categorizer: a Ledger module
 
-A small service for your bookkeeping LXC. You give it a bank or credit-card statement and it
-suggests a category for each transaction, with a confidence score and a short reason. When
-you confirm categories, it learns from them:
+A module for [Ledger (Bookeeping)](https://github.com/mastifdogo/Bookeeping). You upload a bank or
+credit-card statement and an LLM suggests an account from your chart of accounts for each
+transaction. You check the suggestions, then post them as journal entries.
 
-- **Payees you've confirmed before** are matched straight from a local SQLite store, with no LLM call.
-- **Recent confirmations** are added to the prompt as examples, so the model follows your conventions.
-- **Low-confidence or unknown** transactions are marked `needs_review`, so you only check the doubtful ones.
+- **Formats:** CSV exports (columns are found from the header, or guessed from the data when there's
+  no header; single amount or debit/credit columns) and **OFX / QFX / QBO**.
+- **Models:** **Claude** (Anthropic API), or a **local model** through **Ollama** or any
+  OpenAI-compatible server (LM Studio, llama.cpp, vLLM) so statements stay on your network.
+- **Uses your books:** the prompt includes your chart of accounts and how you booked similar
+  transactions from the same bank account before. The model can only answer with one of your real
+  account codes (the response is constrained to a JSON schema).
+- **Learns:** each posted transaction teaches a payee rule (`SHELL #1234 TORONTO` → `SHELL TORONTO`
+  → Fuel). Payees with a rule are categorised without calling the model.
+- **Safe to re-upload:** transactions already uploaded for that account are skipped, so overlapping
+  statements don't post anything twice. Nothing is posted until you press **Post**.
+- Low-confidence suggestions are marked **Needs review**; **Select confident** + **Post selected**
+  takes care of the rest.
 
-It reads **CSV** (most bank exports: detects date/description/amount or debit/credit columns),
-**OFX/QFX/QBO**, and **JSON**. It can call **Claude** (Anthropic API) or a **local model through
-Ollama** if you want statements to stay on your network.
+## Install
 
-## Install (Debian/Ubuntu LXC)
+1. Publish a release of this repository. Ledger installs the **latest GitHub Release**:
+   ```sh
+   git tag v1.0.0 && git push origin v1.0.0
+   ```
+   then create a release from the tag on GitHub (not a draft or pre-release).
+2. In Ledger, open **Modules**, enter `mastifdogo/llm-api-module` and install. **Categorize**
+   appears in the sidebar.
+3. Open **Categorize → Settings**:
+   - **Claude:** paste an Anthropic API key, or (to keep it out of the database and its backups)
+     add `CATEGORIZER_API_KEY=sk-ant-...` to `/etc/ledger/ledger.env` and run
+     `systemctl restart ledger`. The default model is `claude-opus-5-5` at low effort, which
+     works well for this kind of classification.
+   - **Ollama:** choose *Ollama*, set the server URL (e.g. `http://192.168.1.20:11434`) and a model
+     you have pulled. Larger models (14B and up) categorise noticeably better than small ones.
+   - Press **Test connection**.
 
-```bash
-git clone <this repo> /root/txcat && cd /root/txcat
-sudo ./deploy/install.sh
-sudo nano /etc/txcat/txcat.env        # ANTHROPIC_API_KEY=sk-ant-...  (an API token is generated for you)
-sudo nano /etc/txcat/config.toml      # your chart of accounts, provider, etc.
-sudo systemctl start txcat
-curl -s localhost:8765/health
-```
+Needs Ledger 0.6.0 or newer.
 
-To use a local model instead, set `provider = "ollama"`, `ollama_url = "http://<ollama-host>:11434"`
-and `model = "<a model you've pulled>"`. Larger models (e.g. 14B+) categorize much better than small ones.
+## Use
 
-## CLI workflow
+1. **Upload:** choose the file and the bank or card account it belongs to. For credit-card
+   exports that show purchases as positive numbers, tick *flip signs*.
+2. Suggestions appear within a few seconds to a minute (40 transactions per request by default).
+3. **Review:** change any account in the drop-down (your choice is kept, even if you re-run the
+   suggestions), skip rows you don't want to book, then **Post selected**.
 
-```bash
-txcat categorize march.csv                       # table; "?" marks rows needing review
-txcat categorize march.ofx -f csv -o march-review.csv
-# open march-review.csv, fix the "category" column where it's wrong, then:
-txcat learn march-review.csv                     # teaches txcat your choices
-txcat categories                                 # list configured categories
-```
+Each posted transaction becomes a two-line entry: the statement account on one side, the chosen
+account on the other, dated with the transaction date, with the bank's description and its OFX
+transaction ID (or `categorizer <statement>/<row>`) as the reference.
 
-## HTTP API
+Money in → debit the statement account. Money out → credit it. So a purchase on a card
+(liability) account credits the card, and a deposit to chequing debits chequing.
 
-Send `Authorization: Bearer $TXCAT_API_TOKEN` on everything except `/health`.
+## API
 
-**Upload a raw statement file:**
+All routes are under `/api/v1/m/categorizer` and use your Ledger login.
 
-```bash
-curl -s -H "Authorization: Bearer $TOKEN" -H "Content-Type: text/csv" \
-     --data-binary @march.csv "http://bookkeeping-lxc:8765/categorize?filename=march.csv"
-```
-
-**Or send transactions your app has already parsed:**
-
-```bash
-curl -s -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-     -d '{"transactions":[{"date":"2026-03-01","description":"POS SHELL #1234","amount":"-45.10"}]}' \
-     http://bookkeeping-lxc:8765/categorize
-```
-
-Response:
-
-```json
-{"count": 1, "results": [{
-  "transaction": {"date": "2026-03-01", "description": "POS SHELL #1234", "amount": "-45.10", "id": "…", …},
-  "suggestion":  {"transaction_id": "…", "category": "Expenses:Fuel", "confidence": 0.93,
-                  "reason": "Shell gas station", "source": "llm", "alternatives": ["Expenses:Transportation"]},
-  "needs_review": false
-}]}
-```
-
-`source` is `llm`, `memory` (a confirmed payee) or `fallback` (the LLM call failed; the reason says why).
-
-**Record what the bookkeeper actually chose** (single item, or `{"confirmations": [...]}` for many):
-
-```bash
-curl -s -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-     -d '{"transaction":{"date":"2026-03-01","description":"POS SHELL #1234","amount":"-45.10"},"category":"Expenses:Fuel"}' \
-     http://bookkeeping-lxc:8765/feedback
-```
-
-Or from Python, in-process:
-
-```python
-from txcat import Categorizer, Transaction
-from txcat.config import load_config
-
-cat = Categorizer(load_config())
-[s] = cat.categorize([Transaction("2026-03-01", "NETFLIX.COM", "-16.99")])
-cat.confirm(Transaction("2026-03-01", "NETFLIX.COM", "-16.99"), "Expenses:Subscriptions")
-```
-
-## Configuration
-
-See [`config.example.toml`](config.example.toml). The most important setting is `categories`.
-Use the exact account names from your bookkeeping software so suggestions can be applied
-directly. The model can only answer with one of these names (constrained JSON output).
-Environment variables override the file: `TXCAT_PROVIDER`, `TXCAT_MODEL`, `ANTHROPIC_API_KEY`,
-`TXCAT_OLLAMA_URL`, `TXCAT_DB_PATH`, `TXCAT_HOST`, `TXCAT_PORT`, `TXCAT_API_TOKEN`,
-`TXCAT_BATCH_SIZE`, `TXCAT_REVIEW_THRESHOLD`.
-
-With the Claude backend, the default model is `claude-opus-5-5` at low effort, which works well
-for classification. Requests also turn on Anthropic's server-side refusal fallback
-(`fallbacks: "default"`): if the model declines a batch, the API re-runs it on another model
-instead of returning an error. Set `model` to use a different Claude model.
+| Method | Path | |
+|---|---|---|
+| `POST` | `/statements` | `{filename, content, account_code, flip_signs?, date_order?: "auto"\|"mdy"\|"dmy"}` stages a statement and starts categorising it |
+| `GET` | `/statements`, `/statements/:id` | list; one statement with its transactions |
+| `POST` | `/statements/:id/categorize` | `{all?: true}` asks the model again (only unposted rows) |
+| `POST` | `/statements/:id/post` | `{ids?: [...]}` posts rows that have an account |
+| `DELETE` | `/statements/:id` | discards unposted rows |
+| `PATCH` | `/transactions/:id` | `{account_code?, status?: "new"\|"skipped"}` |
+| `POST` | `/transactions/bulk` | the same for `{ids: [...]}` |
+| `POST` | `/suggest` | `{account_code, transactions: [{date, description, amount, memo?}]}` returns suggestions without storing anything (for scripts or other modules) |
+| `GET`/`DELETE` | `/rules`, `/rules/:key` | learned payee rules |
+| `GET`/`PUT` | `/settings`; `POST /settings/test` | provider settings (the API key is never returned) |
 
 ## Privacy
 
-With `provider = "anthropic"`, each transaction's date, description, memo, amount and account
-label are sent to the Anthropic API. With `provider = "ollama"`, nothing leaves your network.
+With Claude, each transaction's date, description, memo and amount, your account codes, names and
+descriptions, and descriptions of recent entries on the statement account are sent to the
+Anthropic API. With Ollama or another server on your network, nothing leaves it.
+
+## Layout
+
+```
+ledger-module.json     manifest
+server.mjs             routes, background categorisation, posting
+lib/parse.mjs          CSV / OFX parsing, amounts, dates, payee keys
+lib/categorize.mjs     prompt, schema, rules, batching
+lib/llm.mjs            Anthropic / Ollama / OpenAI-compatible clients (built-in fetch, no dependencies)
+ui/index.html          the page shown in Ledger
+migrations/            the module's tables (schema mod_categorizer)
+test/                  unit tests: npm test (Node 22+)
+```
+
+Ledger installs modules without a build step or `npm install`, so the module has no dependencies.
 
 ## Development
 
-```bash
-python3 -m venv .venv && .venv/bin/pip install -e '.[anthropic,dev]'
-.venv/bin/pytest
-```
+Run Ledger from a checkout with `MODULES_DIR` pointing at a directory that contains a **copy** of
+this repository named `categorizer` (see Ledger's `docs/MODULES.md`), and apply
+`migrations/001_init.sql` to the `mod_categorizer` schema. To try it without spending API credit,
+point **Server URL** at a local stub that answers like the Messages API.

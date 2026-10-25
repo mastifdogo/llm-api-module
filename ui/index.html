@@ -1,0 +1,593 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Statement Categorizer</title>
+<style>
+	:root {
+		--bg: #fff; --panel: #f6f8fa; --text: #1d232b; --muted: #5d6875; --border: #dde1e6; --accent: #1f6feb;
+		--good: #1a7f37; --warn: #9a6700; --bad: #cf222e; --good-bg: #dafbe1; --warn-bg: #fff8c5; --bad-bg: #ffebe9;
+		color-scheme: light;
+	}
+	@media (prefers-color-scheme: dark) {
+		:root {
+			--bg: #171b21; --panel: #1e242c; --text: #e3e7ec; --muted: #97a1ad; --border: #2c333c; --accent: #4c8dff;
+			--good: #3fb950; --warn: #d29922; --bad: #f85149; --good-bg: #12261a; --warn-bg: #2b2311; --bad-bg: #301617;
+			color-scheme: dark;
+		}
+	}
+	* { box-sizing: border-box; }
+	body { margin: 0; padding: 1rem 1.25rem 3rem; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, sans-serif; }
+	h1 { font-size: 1.35rem; margin: 0 0 0.75rem; }
+	h2 { font-size: 1.05rem; margin: 1.25rem 0 0.5rem; }
+	.muted { color: var(--muted); }
+	.small { font-size: 12px; }
+	nav.tabs { display: flex; gap: 0.25rem; border-bottom: 1px solid var(--border); margin-bottom: 1rem; flex-wrap: wrap; }
+	nav.tabs button { border: 0; background: none; color: var(--muted); padding: 0.5rem 0.8rem; border-bottom: 2px solid transparent; cursor: pointer; font: inherit; }
+	nav.tabs button.active { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
+	.panel { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 1rem; }
+	.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0.75rem 1rem; }
+	label { display: flex; flex-direction: column; gap: 0.25rem; font-weight: 500; }
+	label.inline { flex-direction: row; align-items: center; gap: 0.4rem; font-weight: normal; }
+	input, select { padding: 0.4rem 0.55rem; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: inherit; font: inherit; min-width: 0; }
+	input[type=checkbox] { padding: 0; }
+	button.btn { padding: 0.4rem 0.8rem; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); font: inherit; cursor: pointer; white-space: nowrap; }
+	button.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+	button.btn.danger { color: var(--bad); }
+	button.btn:disabled { opacity: 0.5; cursor: default; }
+	.row { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+	.spacer { flex: 1; }
+	table { width: 100%; border-collapse: collapse; }
+	th, td { text-align: left; padding: 0.4rem 0.5rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+	th { font-weight: 600; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.03em; }
+	td.nowrap { white-space: nowrap; font-variant-numeric: tabular-nums; }
+	td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+	tr.clickable { cursor: pointer; }
+	tr.clickable:hover td { background: var(--panel); }
+	tr.posted td, tr.skipped td { opacity: 0.55; }
+	.neg { color: var(--bad); }
+	.pos { color: var(--good); }
+	.pill { display: inline-block; padding: 0 0.45rem; border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+	.pill.good { background: var(--good-bg); color: var(--good); }
+	.pill.warn { background: var(--warn-bg); color: var(--warn); }
+	.pill.bad { background: var(--bad-bg); color: var(--bad); }
+	.pill.plain { background: var(--panel); color: var(--muted); border: 1px solid var(--border); }
+	td select { width: 100%; max-width: 280px; }
+	.desc { max-width: 380px; overflow-wrap: anywhere; }
+	.reason { color: var(--muted); font-size: 12px; margin-top: 2px; }
+	.err { color: var(--bad); font-size: 12px; margin-top: 2px; }
+	#toast { position: fixed; right: 1rem; bottom: 1rem; max-width: 420px; padding: 0.6rem 0.9rem; border-radius: 8px; background: var(--text); color: var(--bg); display: none; white-space: pre-wrap; z-index: 10; }
+	#toast.error { background: var(--bad); color: #fff; }
+	.table-wrap { overflow-x: auto; }
+	.hidden { display: none !important; }
+	.spin { display: inline-block; width: 12px; height: 12px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; vertical-align: -1px; }
+	@keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<h1>Statement Categorizer</h1>
+<nav class="tabs">
+	<button data-tab="review" class="active">Statements</button>
+	<button data-tab="upload">Upload</button>
+	<button data-tab="rules">Learned rules</button>
+	<button data-tab="settings">Settings</button>
+</nav>
+
+<!-- Statements list + review -->
+<section id="tab-review">
+	<div id="list-view">
+		<div class="row"><span class="muted" id="list-empty">No statements yet. Upload one to get suggestions.</span></div>
+		<div class="table-wrap">
+			<table id="statements" class="hidden">
+				<thead><tr><th>File</th><th>Account</th><th>Dates</th><th>Status</th><th class="num">Posted</th><th class="num">Uploaded</th></tr></thead>
+				<tbody></tbody>
+			</table>
+		</div>
+	</div>
+
+	<div id="detail-view" class="hidden">
+		<div class="row">
+			<button class="btn" id="back">← All statements</button>
+			<strong id="d-title"></strong>
+			<span id="d-status"></span>
+			<span class="spacer"></span>
+			<button class="btn" id="rerun" title="Ask the model again for every transaction that isn't posted">Re-run suggestions</button>
+			<button class="btn danger" id="discard" title="Remove the transactions that aren't posted">Discard unposted</button>
+		</div>
+		<p class="muted small" id="d-info"></p>
+		<p class="err" id="d-error"></p>
+		<div class="panel row" style="margin: 0.5rem 0">
+			<label class="inline">Show
+				<select id="filter">
+					<option value="open">Not posted</option>
+					<option value="review">Needs review</option>
+					<option value="confident">Confident</option>
+					<option value="posted">Posted</option>
+					<option value="skipped">Skipped</option>
+					<option value="all">All</option>
+				</select>
+			</label>
+			<button class="btn" id="sel-confident">Select confident</button>
+			<button class="btn" id="sel-none">Clear selection</button>
+			<span class="spacer"></span>
+			<label class="inline">Set selected to <select id="bulk-account"></select></label>
+			<button class="btn" id="bulk-skip">Skip selected</button>
+			<button class="btn" id="bulk-unskip">Unskip</button>
+			<button class="btn primary" id="post">Post selected</button>
+		</div>
+		<div class="table-wrap">
+			<table id="txs">
+				<thead><tr>
+					<th><input type="checkbox" id="sel-all" title="Select all shown"></th>
+					<th>Date</th><th>Description</th><th class="num">Amount</th><th>Account</th><th>Confidence</th>
+				</tr></thead>
+				<tbody></tbody>
+			</table>
+		</div>
+	</div>
+</section>
+
+<!-- Upload -->
+<section id="tab-upload" class="hidden">
+	<form id="upload" class="panel">
+		<div class="grid">
+			<label>Statement file (CSV, OFX, QFX, QBO)
+				<input type="file" id="file" accept=".csv,.txt,.ofx,.qfx,.qbo,text/csv" required>
+			</label>
+			<label>Bank or card account
+				<select id="up-account" required></select>
+			</label>
+			<label>Dates like 03/04/2026 are
+				<select id="up-date">
+					<option value="auto">Detect</option>
+					<option value="mdy">Month/Day/Year</option>
+					<option value="dmy">Day/Month/Year</option>
+				</select>
+			</label>
+		</div>
+		<p><label class="inline"><input type="checkbox" id="up-flip"> Purchases show as positive amounts (common for credit-card exports) — flip signs</label></p>
+		<p class="muted small">Transactions already uploaded for this account are skipped, so overlapping statements are fine. Nothing is posted until you review and press <em>Post</em>.</p>
+		<button class="btn primary" id="up-btn">Upload and categorise</button>
+		<span id="up-msg" class="muted"></span>
+	</form>
+</section>
+
+<!-- Rules -->
+<section id="tab-rules" class="hidden">
+	<p class="muted">Each time you post a transaction, its payee is remembered with the account you chose. Matching payees get that account straight away, without asking the model.</p>
+	<div class="table-wrap">
+		<table id="rules">
+			<thead><tr><th>Payee</th><th>Account</th><th>Example</th><th class="num">Times</th><th></th></tr></thead>
+			<tbody></tbody>
+		</table>
+	</div>
+</section>
+
+<!-- Settings -->
+<section id="tab-settings" class="hidden">
+	<form id="settings" class="panel">
+		<div class="grid">
+			<label>Provider
+				<select id="s-provider">
+					<option value="anthropic">Claude (Anthropic API)</option>
+					<option value="ollama">Ollama (local model)</option>
+					<option value="openai">OpenAI-compatible server (LM Studio, llama.cpp, vLLM…)</option>
+				</select>
+			</label>
+			<label>Model <input id="s-model" autocomplete="off"></label>
+			<label>Server URL <input id="s-url" autocomplete="off"></label>
+			<label>API key <input id="s-key" type="password" autocomplete="new-password"></label>
+			<label id="s-effort-wrap">Effort (Claude)
+				<select id="s-effort"><option>low</option><option>medium</option><option>high</option></select>
+			</label>
+			<label>Transactions per request <input id="s-batch" type="number" min="1" max="200"></label>
+			<label>Needs review below confidence <input id="s-threshold" type="number" min="0" max="1" step="0.05"></label>
+		</div>
+		<p class="muted small" id="s-key-note"></p>
+		<p class="muted small" id="s-privacy"></p>
+		<div class="row">
+			<button class="btn primary">Save</button>
+			<button class="btn" type="button" id="s-test">Test connection</button>
+			<button class="btn danger" type="button" id="s-clear-key">Remove stored key</button>
+			<span id="s-msg" class="muted"></span>
+		</div>
+	</form>
+</section>
+
+<div id="toast"></div>
+
+<script>
+	// Served by Ledger at /m/categorizer/, so API calls carry your login.
+	const BASE = "/api/v1/m/categorizer";
+	const api = (path, opts = {}) =>
+		fetch(BASE + path, { ...opts, headers: { "Content-Type": "application/json", ...(opts.headers || {}) } }).then(async (r) => {
+			if (!r.ok) {
+				const e = (await r.json().catch(() => ({}))).error;
+				const details = e?.details?.map((d) => (d.field ? `${d.field}: ${d.message}` : d.message)).join("\n");
+				throw new Error(details || e?.message || r.statusText);
+			}
+			return r.status === 204 ? null : r.json();
+		});
+	const $ = (id) => document.getElementById(id);
+	const el = (tag, attrs = {}, ...kids) => {
+		const n = document.createElement(tag);
+		for (const [k, v] of Object.entries(attrs)) {
+			if (k === "class") n.className = v;
+			else if (k.startsWith("on")) n[k] = v;
+			else if (v !== false && v != null) n.setAttribute(k, v === true ? "" : v);
+		}
+		n.append(...kids.filter((k) => k != null && k !== false));
+		return n;
+	};
+	let toastTimer;
+	function toast(msg, isError = false) {
+		const t = $("toast");
+		t.textContent = msg;
+		t.className = isError ? "error" : "";
+		t.style.display = "block";
+		clearTimeout(toastTimer);
+		toastTimer = setTimeout(() => (t.style.display = "none"), isError ? 8000 : 3500);
+	}
+	const fail = (e) => toast(e.message || String(e), true);
+	const money = (cents) => {
+		const n = Number(cents) / 100;
+		return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+	};
+	const TYPE_ORDER = ["expense", "revenue", "asset", "liability", "equity"];
+
+	// ---------------------------------------------------------------- tabs
+	function showTab(name) {
+		document.querySelectorAll("nav.tabs button").forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
+		for (const t of ["review", "upload", "rules", "settings"]) $(`tab-${t}`).classList.toggle("hidden", t !== name);
+		if (name === "review") loadStatements().catch(fail);
+		if (name === "rules") loadRules().catch(fail);
+		if (name === "settings") loadSettings().catch(fail);
+		if (name === "upload") loadUploadAccounts().catch(fail);
+	}
+	document.querySelectorAll("nav.tabs button").forEach((b) => (b.onclick = () => { closeDetail(); showTab(b.dataset.tab); }));
+
+	// ---------------------------------------------------------------- accounts
+	let accounts = [];
+	async function loadAccounts() {
+		accounts = (await api("/accounts")).data;
+		return accounts;
+	}
+	function accountLabel(code) {
+		const a = accounts.find((x) => x.code === code);
+		return a ? `${a.code} · ${a.name}` : code;
+	}
+	function accountOptions(select, list, { selected = null, placeholder = null } = {}) {
+		select.replaceChildren();
+		if (placeholder !== null) select.append(el("option", { value: "" }, placeholder));
+		for (const type of TYPE_ORDER) {
+			const group = list.filter((a) => a.type === type);
+			if (group.length === 0) continue;
+			const og = el("optgroup", { label: type[0].toUpperCase() + type.slice(1) });
+			for (const a of group) og.append(el("option", { value: a.code, selected: a.code === selected }, `${a.code} · ${a.name}`));
+			select.append(og);
+		}
+		if (selected === null && placeholder !== null) select.value = "";
+	}
+
+	// ---------------------------------------------------------------- upload
+	async function loadUploadAccounts() {
+		await loadAccounts();
+		const sel = $("up-account");
+		const prev = sel.value;
+		const bankish = accounts.filter((a) => a.type === "asset" || a.type === "liability");
+		sel.replaceChildren(el("option", { value: "" }, "Choose…"));
+		for (const a of bankish) sel.append(el("option", { value: a.code }, `${a.code} · ${a.name} (${a.type}, ${a.currency})`));
+		sel.value = prev || (localStorageGet("upload-account") ?? "");
+	}
+	function localStorageGet(k) { try { return localStorage.getItem("categorizer:" + k); } catch { return null; } }
+	function localStorageSet(k, v) { try { localStorage.setItem("categorizer:" + k, v); } catch {} }
+
+	$("upload").onsubmit = async (e) => {
+		e.preventDefault();
+		const file = $("file").files[0];
+		if (!file) return;
+		if (file.size > 900_000) return toast("That file is over 900 KB; split it into smaller statements.", true);
+		$("up-btn").disabled = true;
+		$("up-msg").textContent = "Uploading…";
+		try {
+			const content = await file.text();
+			const r = await api("/statements", {
+				method: "POST",
+				body: JSON.stringify({ filename: file.name, content, account_code: $("up-account").value, flip_signs: $("up-flip").checked, date_order: $("up-date").value }),
+			});
+			localStorageSet("upload-account", $("up-account").value);
+			$("upload").reset();
+			$("up-msg").textContent = "";
+			toast(`${r.transactions} transactions staged${r.duplicates ? `, ${r.duplicates} already uploaded before were skipped` : ""}.` + (r.warnings.length ? `\n${r.warnings.slice(0, 3).join("\n")}` : ""));
+			showTab("review");
+			openStatement(r.id);
+		} catch (err) {
+			$("up-msg").textContent = "";
+			fail(err);
+		} finally {
+			$("up-btn").disabled = false;
+		}
+	};
+
+	// ---------------------------------------------------------------- statements list
+	const STATUS = {
+		queued: ["plain", "Queued"],
+		categorizing: ["warn", "Categorising…"],
+		ready: ["good", "Ready"],
+		error: ["bad", "Error"],
+	};
+	const statusPill = (s) => {
+		const [cls, text] = STATUS[s] || ["plain", s];
+		return el("span", { class: `pill ${cls}` }, s === "categorizing" ? el("span", { class: "spin" }) : null, s === "categorizing" ? " " : "", text);
+	};
+	async function loadStatements() {
+		if (accounts.length === 0) await loadAccounts();
+		const { data } = await api("/statements");
+		$("list-empty").classList.toggle("hidden", data.length > 0);
+		$("statements").classList.toggle("hidden", data.length === 0);
+		$("statements").tBodies[0].replaceChildren(
+			...data.map((s) =>
+				el("tr", { class: "clickable", onclick: () => openStatement(s.id) },
+					el("td", {}, s.filename),
+					el("td", {}, accountLabel(s.account_code)),
+					el("td", {}, s.first_date ? `${s.first_date} – ${s.last_date}` : "—"),
+					el("td", {}, statusPill(s.status)),
+					el("td", { class: "num" }, `${s.posted} / ${s.total}`),
+					el("td", { class: "num muted" }, new Date(s.created_at).toLocaleDateString()),
+				),
+			),
+		);
+	}
+
+	// ---------------------------------------------------------------- statement detail
+	let current = null; // { statement, transactions, review_threshold }
+	let selected = new Set();
+	let pollTimer = null;
+
+	function closeDetail() {
+		clearTimeout(pollTimer);
+		current = null;
+		$("detail-view").classList.add("hidden");
+		$("list-view").classList.remove("hidden");
+	}
+	$("back").onclick = () => { closeDetail(); loadStatements().catch(fail); };
+
+	async function openStatement(id) {
+		selected = new Set();
+		$("list-view").classList.add("hidden");
+		$("detail-view").classList.remove("hidden");
+		await refresh(id).catch(fail);
+	}
+
+	async function refresh(id = current?.statement.id) {
+		clearTimeout(pollTimer);
+		if (accounts.length === 0) await loadAccounts();
+		current = await api(`/statements/${id}`);
+		renderDetail();
+		if (["queued", "categorizing"].includes(current.statement.status)) pollTimer = setTimeout(() => refresh(id).catch(fail), 2000);
+	}
+
+	const isReview = (t) => t.status === "new" && (!t.account_code || t.source === "error" || (t.chosen_code == null && (t.confidence ?? 0) < current.review_threshold));
+	const isConfident = (t) => t.status === "new" && t.account_code && !isReview(t);
+
+	function shown() {
+		const f = $("filter").value;
+		return current.transactions.filter((t) =>
+			f === "all" ? true : f === "open" ? t.status === "new" : f === "review" ? isReview(t) : f === "confident" ? isConfident(t) : t.status === f,
+		);
+	}
+
+	function renderDetail() {
+		const { statement: s, transactions } = current;
+		const stmtAccount = accounts.find((a) => a.code === s.account_code);
+		$("d-title").textContent = `${s.filename} → ${accountLabel(s.account_code)}`;
+		$("d-status").replaceChildren(statusPill(s.status));
+		const review = transactions.filter(isReview).length;
+		$("d-info").textContent =
+			`${s.total} transactions${s.first_date ? `, ${s.first_date} to ${s.last_date}` : ""} · ${s.posted} posted · ${s.skipped} skipped · ${review} need review` +
+			(s.duplicates ? ` · ${s.duplicates} skipped at upload as already seen` : "");
+		$("d-error").textContent = s.error || "";
+		const busy = ["queued", "categorizing"].includes(s.status);
+		$("rerun").disabled = busy;
+
+		const candidates = accounts.filter((a) => a.code !== s.account_code && (!stmtAccount || a.currency === stmtAccount.currency));
+		accountOptions($("bulk-account"), candidates, { placeholder: "—" });
+		$("bulk-account").value = "";
+
+		const rows = shown();
+		$("txs").tBodies[0].replaceChildren(
+			...rows.map((t) => {
+				const open = t.status === "new";
+				const sel = el("select", { disabled: !open || busy });
+				accountOptions(sel, candidates, { selected: t.account_code, placeholder: "Choose account…" });
+				sel.onchange = () => setAccount([t.id], sel.value || null);
+				const cb = el("input", { type: "checkbox", disabled: t.status === "posted" });
+				cb.checked = selected.has(t.id);
+				cb.onchange = () => { cb.checked ? selected.add(t.id) : selected.delete(t.id); updateButtons(); };
+				let conf;
+				if (t.status === "posted") conf = el("span", { class: "pill good" }, `Posted #${t.journal_entry_id}`);
+				else if (t.status === "skipped") conf = el("span", { class: "pill plain" }, "Skipped");
+				else if (t.chosen_code) conf = el("span", { class: "pill good" }, "Your choice");
+				else if (t.source === "error") conf = el("span", { class: "pill bad" }, "Failed");
+				else if (t.confidence == null) conf = el("span", { class: "pill plain" }, busy ? "Waiting…" : "—");
+				else {
+					const pct = Math.round(t.confidence * 100);
+					conf = el("span", { class: `pill ${t.confidence >= current.review_threshold ? "good" : t.confidence >= 0.5 ? "warn" : "bad"}` }, t.source === "rule" ? `Rule ${pct}%` : `${pct}%`);
+				}
+				return el("tr", { class: t.status },
+					el("td", {}, cb),
+					el("td", { class: "nowrap" }, t.date),
+					el("td", { class: "desc" }, t.description, t.memo ? el("div", { class: "reason" }, t.memo) : null),
+					el("td", { class: `num ${t.amount_cents < 0 ? "neg" : "pos"}` }, money(t.amount_cents)),
+					el("td", {}, sel, t.chosen_code && t.suggested_code && t.chosen_code !== t.suggested_code ? el("div", { class: "reason" }, `Suggested: ${accountLabel(t.suggested_code)}`) : null),
+					el("td", {}, conf, t.reason && t.status === "new" ? el("div", { class: t.source === "error" ? "err" : "reason" }, t.reason) : null, t.error ? el("div", { class: "err" }, t.error) : null),
+				);
+			}),
+		);
+		$("sel-all").checked = rows.length > 0 && rows.every((t) => selected.has(t.id) || t.status === "posted");
+		updateButtons();
+	}
+
+	function selectedOpen() {
+		return current.transactions.filter((t) => selected.has(t.id) && t.status === "new");
+	}
+	function updateButtons() {
+		const n = selectedOpen().filter((t) => t.account_code).length;
+		$("post").textContent = `Post selected (${n})`;
+		$("post").disabled = n === 0;
+	}
+
+	$("filter").onchange = () => renderDetail();
+	$("sel-all").onchange = () => {
+		for (const t of shown()) if (t.status !== "posted") $("sel-all").checked ? selected.add(t.id) : selected.delete(t.id);
+		renderDetail();
+	};
+	$("sel-confident").onclick = () => { for (const t of current.transactions) if (isConfident(t)) selected.add(t.id); renderDetail(); };
+	$("sel-none").onclick = () => { selected = new Set(); renderDetail(); };
+
+	async function setAccount(ids, code) {
+		try {
+			await api("/transactions/bulk", { method: "POST", body: JSON.stringify({ ids, account_code: code }) });
+			await refresh();
+		} catch (e) { fail(e); }
+	}
+	$("bulk-account").onchange = () => {
+		const code = $("bulk-account").value;
+		const ids = selectedOpen().map((t) => t.id);
+		if (!code) return;
+		if (ids.length === 0) { $("bulk-account").value = ""; return toast("Select some transactions first."); }
+		setAccount(ids, code);
+	};
+	async function setStatus(status) {
+		const ids = current.transactions.filter((t) => selected.has(t.id) && t.status !== "posted").map((t) => t.id);
+		if (ids.length === 0) return toast("Select some transactions first.");
+		try {
+			await api("/transactions/bulk", { method: "POST", body: JSON.stringify({ ids, status }) });
+			selected = new Set();
+			await refresh();
+		} catch (e) { fail(e); }
+	}
+	$("bulk-skip").onclick = () => setStatus("skipped");
+	$("bulk-unskip").onclick = () => setStatus("new");
+
+	$("post").onclick = async () => {
+		const ids = selectedOpen().filter((t) => t.account_code).map((t) => t.id);
+		if (ids.length === 0) return;
+		if (!confirm(`Post ${ids.length} journal entr${ids.length === 1 ? "y" : "ies"} to the ledger?`)) return;
+		$("post").disabled = true;
+		try {
+			const r = await api(`/statements/${current.statement.id}/post`, { method: "POST", body: JSON.stringify({ ids }) });
+			selected = new Set();
+			toast(`Posted ${r.posted} entr${r.posted === 1 ? "y" : "ies"}.` + (r.failed.length ? `\n${r.failed.length} failed: ${r.failed[0].error}` : ""), r.failed.length > 0);
+			await refresh();
+		} catch (e) { fail(e); updateButtons(); }
+	};
+	$("rerun").onclick = async () => {
+		if (!confirm("Ask the model again for every transaction that isn't posted? Your own choices are kept.")) return;
+		try {
+			await api(`/statements/${current.statement.id}/categorize`, { method: "POST", body: JSON.stringify({ all: true }) });
+			await refresh();
+		} catch (e) { fail(e); }
+	};
+	$("discard").onclick = async () => {
+		if (!confirm("Remove the transactions of this statement that aren't posted? Posted entries stay in the ledger.")) return;
+		try {
+			await api(`/statements/${current.statement.id}`, { method: "DELETE" });
+			closeDetail();
+			await loadStatements();
+		} catch (e) { fail(e); }
+	};
+
+	// ---------------------------------------------------------------- rules
+	async function loadRules() {
+		if (accounts.length === 0) await loadAccounts();
+		const { data } = await api("/rules");
+		const body = $("rules").tBodies[0];
+		if (data.length === 0) return body.replaceChildren(el("tr", {}, el("td", { colspan: 5, class: "muted" }, "No rules yet. They appear as you post transactions.")));
+		body.replaceChildren(
+			...data.map((r) =>
+				el("tr", {},
+					el("td", {}, r.payee_key),
+					el("td", {}, accountLabel(r.account_code)),
+					el("td", { class: "muted desc" }, r.example),
+					el("td", { class: "num" }, String(r.hits)),
+					el("td", { class: "num" }, el("button", { class: "btn danger", onclick: async () => {
+						try { await api(`/rules/${encodeURIComponent(r.payee_key)}`, { method: "DELETE" }); await loadRules(); } catch (e) { fail(e); }
+					} }, "Forget")),
+				),
+			),
+		);
+	}
+
+	// ---------------------------------------------------------------- settings
+	let settings = null;
+	function renderSettings() {
+		const s = settings;
+		$("s-provider").value = s.provider;
+		$("s-model").value = s.model;
+		$("s-model").placeholder = s.defaults[s.provider].model || "model name";
+		$("s-url").value = s.base_url;
+		$("s-url").placeholder = s.defaults[s.provider].base_url;
+		$("s-effort").value = s.effort;
+		$("s-effort-wrap").classList.toggle("hidden", s.provider !== "anthropic");
+		$("s-batch").value = s.batch_size;
+		$("s-threshold").value = s.review_threshold;
+		$("s-key").value = "";
+		$("s-key").disabled = s.api_key_from_env;
+		$("s-key").placeholder = s.api_key_from_env ? "set in ledger.env" : s.api_key_set ? "•••••••• (stored; type to replace)" : s.provider === "anthropic" ? "sk-ant-…" : "optional";
+		$("s-clear-key").classList.toggle("hidden", !s.api_key_set || s.api_key_from_env);
+		$("s-key-note").textContent = s.api_key_from_env
+			? "The API key comes from CATEGORIZER_API_KEY / ANTHROPIC_API_KEY in /etc/ledger/ledger.env."
+			: "A key saved here is stored in the Ledger database (and its backups). To keep it out of the database, put CATEGORIZER_API_KEY=… in /etc/ledger/ledger.env and restart Ledger instead.";
+		$("s-privacy").textContent = s.provider === "anthropic"
+			? "Privacy: each transaction's date, description, memo and amount, your account names, and recent entry descriptions for the statement account are sent to the Anthropic API."
+			: "Privacy: transaction details are sent to the server above. With a model running on your own network, nothing leaves it.";
+	}
+	async function loadSettings() {
+		settings = await api("/settings");
+		renderSettings();
+	}
+	$("s-provider").onchange = () => {
+		const p = $("s-provider").value;
+		$("s-model").value = settings.defaults[p].model;
+		$("s-url").value = settings.defaults[p].base_url;
+		$("s-model").placeholder = settings.defaults[p].model || "model name";
+		$("s-effort-wrap").classList.toggle("hidden", p !== "anthropic");
+	};
+	$("settings").onsubmit = async (e) => {
+		e.preventDefault();
+		const body = {
+			provider: $("s-provider").value,
+			model: $("s-model").value,
+			base_url: $("s-url").value,
+			effort: $("s-effort").value,
+			batch_size: Number($("s-batch").value),
+			review_threshold: Number($("s-threshold").value),
+		};
+		if ($("s-key").value.trim() !== "") body.api_key = $("s-key").value.trim();
+		try {
+			settings = await api("/settings", { method: "PUT", body: JSON.stringify(body) });
+			renderSettings();
+			toast("Settings saved.");
+		} catch (err) { fail(err); }
+	};
+	$("s-clear-key").onclick = async () => {
+		try {
+			settings = await api("/settings", { method: "PUT", body: JSON.stringify({ api_key: null }) });
+			renderSettings();
+			toast("Stored key removed.");
+		} catch (err) { fail(err); }
+	};
+	$("s-test").onclick = async () => {
+		$("s-msg").textContent = "Testing…";
+		try {
+			const r = await api("/settings/test", { method: "POST" });
+			$("s-msg").textContent = r.ok ? `Works: ${r.model} answered in ${(r.ms / 1000).toFixed(1)} s.` : `Failed: ${r.error || "unexpected answer"}`;
+		} catch (err) { $("s-msg").textContent = ""; fail(err); }
+	};
+
+	showTab("review");
+</script>
+</body>
+</html>
