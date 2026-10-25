@@ -23,13 +23,17 @@ transaction. You check the suggestions, then post them as journal entries.
 
 ## Install
 
+Needs **Ledger 0.7.0 or newer** (for dashboard to-dos and notifications and the sidebar icon).
+
 1. Publish a release of this repository. Ledger installs the **latest GitHub Release**:
+   bump `version` in `ledger-module.json`, then
    ```sh
-   git tag v1.0.0 && git push origin v1.0.0
+   git tag v1.2.0 && git push origin v1.2.0
    ```
-   then create a release from the tag on GitHub (not a draft or pre-release).
-2. In Ledger, open **Modules**, enter `mastifdogo/llm-api-module` and install. **Categorize**
-   appears in the sidebar.
+   and create a release from the tag on GitHub (not a draft or pre-release).
+2. In Ledger, open **Settings → Modules**, enter `mastifdogo/llm-api-module` and press **Add**.
+   **Categorize** appears in the sidebar (you can hide or reorder it under Settings → Sidebar).
+   Updates install on Ledger's update schedule, or with **Update modules now**.
 3. Open **Categorize → Settings**:
    - **Claude:** paste an Anthropic API key, or (to keep it out of the database and its backups)
      add `CATEGORIZER_API_KEY=sk-ant-...` to `/etc/ledger/ledger.env` and run
@@ -39,7 +43,27 @@ transaction. You check the suggestions, then post them as journal entries.
      you have pulled. Larger models (14B and up) categorise noticeably better than small ones.
    - Press **Test connection**.
 
-Needs Ledger 0.6.0 or newer.
+### Accounts it expects
+
+The module creates no accounts. It works with your chart of accounts:
+
+- **Statement accounts:** the bank account (asset) or credit card (liability) each statement
+  belongs to, e.g. `1000 Chequing` or `2100 Visa`.
+- **Categories:** your expense, revenue and other accounts. The model only suggests active
+  accounts in the statement account's currency (CAD or USD).
+- **Accounts payable** (optional, liability, e.g. `2000 Accounts payable`): choose it under
+  Settings → Email to post approved bills there. One per currency is needed if you get bills in
+  both.
+
+### On Ledger's dashboard
+
+- A **notification** per statement that has transactions waiting to be posted
+  ("march.csv: 12 transactions to post"; a warning when some need review). It goes away once
+  everything is posted, skipped or discarded.
+- A **to-do** per unpaid bill, with its due date ("Review bill: Rogers 85.50 CAD", then "Pay
+  Rogers 85.50 CAD" after approval). It's ticked when the payment is posted, and removed when the
+  bill is ignored or deleted.
+- A red **notification** when the scheduled email check fails, cleared by the next good check.
 
 ## Use
 
@@ -137,6 +161,18 @@ and PDF attachments) are sent too. With Ollama or another server on your network
 it. Emails that don't pass the filter are never sent anywhere. Bill PDFs and email text are stored
 in the Ledger database.
 
+## Notes on Ledger's module guidelines
+
+- **No dependencies:** only Node built-ins. `server.mjs` imports its own files from `lib/`, which
+  install with the release archive.
+- **Long timeouts for the LLM:** requests to the model may take up to 180 s, and IMAP up to
+  60 s, because classifying a batch of 40 transactions or reading a PDF takes longer than the
+  usual 10 s limit for outbound calls.
+- **Secrets:** the API key and mailbox password are stored in the module's `settings` table (or
+  read from `/etc/ledger/ledger.env`). They are never returned by the API or logged.
+- **Layout:** the page works from about 260 px wide (Ledger's side-by-side panes) up to full
+  width, in light and dark mode.
+
 ## Layout
 
 ```
@@ -149,6 +185,7 @@ lib/bill-routes.mjs    mailbox checks and schedule, bill routes, matching bills 
 lib/bills.mjs          bill extraction prompt, duplicates, match scoring
 lib/imap.mjs           minimal read-only IMAP client
 lib/mime.mjs           email (MIME) parser
+lib/dashboard.mjs      notifications and to-dos on Ledger's dashboard
 ui/index.html          the page shown in Ledger
 migrations/            the module's tables (schema mod_categorizer)
 test/                  unit tests: npm test (Node 22+)
@@ -158,7 +195,8 @@ Ledger installs modules without a build step or `npm install`, so the module has
 
 ## Development
 
-Run Ledger from a checkout with `MODULES_DIR` pointing at a directory that contains a **copy** of
-this repository named `categorizer` (see Ledger's `docs/MODULES.md`), and apply
-`migrations/001_init.sql` to the `mod_categorizer` schema. To try it without spending API credit,
-point **Server URL** at a local stub that answers like the Messages API.
+Run Ledger (0.7.0+) from a checkout with `MODULES_DIR` pointing at a directory that contains this
+repository (or a symlink to it) named `categorizer`; see Ledger's `docs/MODULES.md`. Apply
+`migrations/*.sql` in order to the `mod_categorizer` schema. To try it without spending API
+credit, point **Server URL** at a local stub that answers like the Messages API. `npm test` runs
+the unit tests (Node 22+).

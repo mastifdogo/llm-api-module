@@ -1,13 +1,14 @@
 {
   "id": "categorizer",
   "name": "Statement Categorizer",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Upload bank or credit-card statements (CSV, OFX, QFX) and an LLM (Claude, or a local model via Ollama) recommends an account for each transaction. Optionally checks a mailbox on a schedule for bills, tracks them until paid and matches them to statement payments. With Claude, transaction and bill details are sent to the Anthropic API.",
-  "ledger": ">=0.6.0",
+  "ledger": ">=0.7.0",
   "server": "server.mjs",
   "ui": "ui",
   "nav": {
-    "label": "Categorize"
+    "label": "Categorize",
+    "icon": "dollar"
   },
   "migrations": "migrations"
 }

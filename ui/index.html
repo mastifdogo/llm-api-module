@@ -18,16 +18,16 @@
 		}
 	}
 	* { box-sizing: border-box; }
-	body { margin: 0; padding: 1rem 1.25rem 3rem; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, sans-serif; }
+	body { margin: 0; padding: 1rem 1.25rem 3rem; background: var(--bg); color: var(--text); font: 15px/1.45 system-ui, sans-serif; }
 	h1 { font-size: 1.35rem; margin: 0 0 0.75rem; }
 	h2 { font-size: 1.05rem; margin: 1.25rem 0 0.5rem; }
 	.muted { color: var(--muted); }
-	.small { font-size: 12px; }
-	nav.tabs { display: flex; gap: 0.25rem; border-bottom: 1px solid var(--border); margin-bottom: 1rem; flex-wrap: wrap; }
-	nav.tabs button { border: 0; background: none; color: var(--muted); padding: 0.5rem 0.8rem; border-bottom: 2px solid transparent; cursor: pointer; font: inherit; }
+	.small { font-size: 13px; }
+	nav.tabs { display: flex; gap: 0.25rem; border-bottom: 1px solid var(--border); margin-bottom: 1rem; overflow-x: auto; }
+	nav.tabs button { border: 0; background: none; color: var(--muted); padding: 0.5rem 0.8rem; border-bottom: 2px solid transparent; cursor: pointer; font: inherit; white-space: nowrap; }
 	nav.tabs button.active { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
-	.panel { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 1rem; }
-	.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0.75rem 1rem; }
+	.panel { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 1rem; }
+	.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr)); gap: 0.75rem 1rem; }
 	label { display: flex; flex-direction: column; gap: 0.25rem; font-weight: 500; }
 	label.inline { flex-direction: row; align-items: center; gap: 0.4rem; font-weight: normal; }
 	input, select { padding: 0.4rem 0.55rem; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: inherit; font: inherit; min-width: 0; }
@@ -54,6 +54,24 @@
 	.pill.bad { background: var(--bad-bg); color: var(--bad); }
 	.pill.plain { background: var(--panel); color: var(--muted); border: 1px solid var(--border); }
 	td select { width: 100%; max-width: 280px; }
+	textarea, .grid input, .grid select { width: 100%; }
+	/* Narrow panes (Ledger's side-by-side view, phones): tables become stacked rows. */
+	@media (max-width: 640px) {
+		body { padding: 0.75rem 0.75rem 3rem; }
+		h1 { font-size: 1.15rem; }
+		.panel { padding: 0.75rem; }
+		table.stack thead { display: none; }
+		table.stack tr { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.2rem 0.6rem; padding: 0.55rem 0; border-bottom: 1px solid var(--border); }
+		table.stack td { border: 0; padding: 0; }
+		table.stack td.wide { flex-basis: 100%; }
+		table.stack td.num { margin-left: auto; }
+		td select { max-width: none; }
+		.desc { max-width: none; }
+		.row > .spacer { display: none; }
+		label.inline { flex-wrap: wrap; }
+		#toast { left: 0.75rem; right: 0.75rem; max-width: none; }
+		iframe.pdf { height: 360px; }
+	}
 	.desc { max-width: 380px; overflow-wrap: anywhere; }
 	.reason { color: var(--muted); font-size: 12px; margin-top: 2px; }
 	.err { color: var(--bad); font-size: 12px; margin-top: 2px; }
@@ -86,7 +104,7 @@
 	<div id="list-view">
 		<div class="row"><span class="muted" id="list-empty">No statements yet. Upload one to get suggestions.</span></div>
 		<div class="table-wrap">
-			<table id="statements" class="hidden">
+			<table id="statements" class="stack hidden">
 				<thead><tr><th>File</th><th>Account</th><th>Dates</th><th>Status</th><th class="num">Posted</th><th class="num">Uploaded</th></tr></thead>
 				<tbody></tbody>
 			</table>
@@ -124,7 +142,7 @@
 			<button class="btn primary" id="post">Post selected</button>
 		</div>
 		<div class="table-wrap">
-			<table id="txs">
+			<table id="txs" class="stack">
 				<thead><tr>
 					<th><input type="checkbox" id="sel-all" title="Select all shown"></th>
 					<th>Date</th><th>Description</th><th class="num">Amount</th><th>Account</th><th>Confidence</th>
@@ -156,7 +174,7 @@
 	</div>
 	<p class="muted small">Bills are read from your mailbox on a schedule (set it up under Settings → Email). Approve a bill once its details are right. When a statement contains its payment, the transaction is matched to the bill automatically, and posting it marks the bill paid.</p>
 	<div class="table-wrap">
-		<table id="bills">
+		<table id="bills" class="stack">
 			<thead><tr><th>Due</th><th>Vendor</th><th>Invoice</th><th class="num">Amount</th><th>Account</th><th>Status</th><th>Payment</th></tr></thead>
 			<tbody></tbody>
 		</table>
@@ -231,7 +249,7 @@
 <section id="tab-rules" class="hidden">
 	<p class="muted">Each time you post a transaction, its payee is remembered with the account you chose. Matching payees get that account straight away, without asking the model.</p>
 	<div class="table-wrap">
-		<table id="rules">
+		<table id="rules" class="stack">
 			<thead><tr><th>Payee</th><th>Account</th><th>Example</th><th class="num">Times</th><th></th></tr></thead>
 			<tbody></tbody>
 		</table>
@@ -330,10 +348,7 @@
 		toastTimer = setTimeout(() => (t.style.display = "none"), isError ? 8000 : 3500);
 	}
 	const fail = (e) => toast(e.message || String(e), true);
-	const money = (cents) => {
-		const n = Number(cents) / 100;
-		return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-	};
+	const money = (cents) => (Number(cents) / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 	const TYPE_ORDER = ["expense", "revenue", "asset", "liability", "equity"];
 
 	// ---------------------------------------------------------------- tabs
@@ -430,7 +445,7 @@
 		$("statements").tBodies[0].replaceChildren(
 			...data.map((s) =>
 				el("tr", { class: "clickable", onclick: () => openStatement(s.id) },
-					el("td", {}, s.filename),
+					el("td", { class: "wide" }, s.filename),
 					el("td", {}, accountLabel(s.account_code)),
 					el("td", {}, s.first_date ? `${s.first_date} – ${s.last_date}` : "—"),
 					el("td", {}, statusPill(s.status)),
@@ -493,6 +508,7 @@
 		$("rerun").disabled = busy;
 
 		const candidates = accounts.filter((a) => a.code !== s.account_code && (!stmtAccount || a.currency === stmtAccount.currency));
+		const cur = stmtAccount?.currency ?? "";
 		accountOptions($("bulk-account"), candidates, { placeholder: "—" });
 		$("bulk-account").value = "";
 
@@ -523,10 +539,10 @@
 				return el("tr", { class: t.status },
 					el("td", {}, cb),
 					el("td", { class: "nowrap" }, t.date),
-					el("td", { class: "desc" }, t.description, t.memo ? el("div", { class: "reason" }, t.memo) : null),
-					el("td", { class: `num ${t.amount_cents < 0 ? "neg" : "pos"}` }, money(t.amount_cents)),
-					el("td", {}, sel, t.chosen_code && t.suggested_code && t.chosen_code !== t.suggested_code ? el("div", { class: "reason" }, `Suggested: ${accountLabel(t.suggested_code)}`) : null),
-					el("td", {}, conf, t.reason && t.status === "new" ? el("div", { class: t.source === "error" ? "err" : "reason" }, t.reason) : null, t.error ? el("div", { class: "err" }, t.error) : null),
+					el("td", { class: "desc wide" }, t.description, t.memo ? el("div", { class: "reason" }, t.memo) : null),
+					el("td", { class: `num ${t.amount_cents < 0 ? "neg" : "pos"}` }, `${money(t.amount_cents)} ${cur}`),
+					el("td", { class: "wide" }, sel, t.chosen_code && t.suggested_code && t.chosen_code !== t.suggested_code ? el("div", { class: "reason" }, `Suggested: ${accountLabel(t.suggested_code)}`) : null),
+					el("td", { class: "wide" }, conf, t.reason && t.status === "new" ? el("div", { class: t.source === "error" ? "err" : "reason" }, t.reason) : null, t.error ? el("div", { class: "err" }, t.error) : null),
 				);
 			}),
 		);
@@ -615,7 +631,7 @@
 				el("tr", {},
 					el("td", {}, r.payee_key),
 					el("td", {}, accountLabel(r.account_code)),
-					el("td", { class: "muted desc" }, r.example),
+					el("td", { class: "muted desc wide" }, r.example),
 					el("td", { class: "num" }, String(r.hits)),
 					el("td", { class: "num" }, el("button", { class: "btn danger", onclick: async () => {
 						try { await api(`/rules/${encodeURIComponent(r.payee_key)}`, { method: "DELETE" }); await loadRules(); } catch (e) { fail(e); }
@@ -728,7 +744,7 @@
 					: el("span", { class: "muted" }, b.kind === "receipt" ? "receipt" : "—");
 				return el("tr", { class: `clickable ${currentBill?.id === b.id ? "selected" : ""}`, onclick: () => openBill(b.id) },
 					el("td", { class: `nowrap ${overdue ? "neg" : ""}` }, b.due_date || (b.bill_date ? `(${b.bill_date})` : "—")),
-					el("td", {}, b.vendor || el("span", { class: "muted" }, b.mail_subject || "(unknown)")),
+					el("td", { class: "wide" }, b.vendor || el("span", { class: "muted" }, b.mail_subject || "(unknown)")),
 					el("td", {}, b.invoice_number),
 					el("td", { class: "num" }, b.amount_cents == null ? "—" : `${money(b.amount_cents)} ${b.currency}`),
 					el("td", {}, b.account_code ? accountLabel(b.account_code) : el("span", { class: "muted" }, "—")),
@@ -819,12 +835,12 @@
 		const pay = $("bd-payments");
 		if (payments.length === 0) pay.replaceChildren(el("p", { class: "muted small" }, b.status === "paid" ? "Marked paid by hand." : "No matching bank transaction yet. It's matched when a statement with the payment is uploaded."));
 		else pay.replaceChildren(
-			el("table", {}, el("tbody", {}, ...payments.map((t) =>
+			el("table", { class: "stack" }, el("tbody", {}, ...payments.map((t) =>
 				el("tr", {},
 					el("td", { class: "nowrap" }, t.date),
 					el("td", {}, t.description),
-					el("td", { class: "num neg" }, money(t.amount_cents)),
-					el("td", {}, accountLabel(t.account_code), " → ", accountLabel(t.code || "")),
+					el("td", { class: "num neg" }, `${money(t.amount_cents)} ${b.currency}`),
+					el("td", { class: "wide" }, accountLabel(t.account_code), " → ", accountLabel(t.code || "")),
 					el("td", {}, t.status === "posted" ? el("span", { class: "pill good" }, `Posted #${t.journal_entry_id}`) : el("span", { class: "pill plain" }, "Waiting to be posted")),
 					el("td", {}, t.status !== "posted" ? el("button", { class: "btn", onclick: () => billAction("unmatch") }, "Not this one") : el("a", { href: "#", onclick: (e) => { e.preventDefault(); showTab("review"); openStatement(t.statement_id); } }, "Open statement")),
 				),
@@ -836,11 +852,11 @@
 				if (data.length === 0 || currentBill?.id !== b.id) return;
 				$("bd-candidates").replaceChildren(
 					el("p", { class: "small" }, "Unposted transactions with this amount:"),
-					el("table", {}, el("tbody", {}, ...data.map((t) =>
+					el("table", { class: "stack" }, el("tbody", {}, ...data.map((t) =>
 						el("tr", {},
 							el("td", { class: "nowrap" }, t.date),
 							el("td", {}, t.description),
-							el("td", { class: "num neg" }, money(t.amount_cents)),
+							el("td", { class: "num neg" }, `${money(t.amount_cents)} ${b.currency}`),
 							el("td", {}, accountLabel(t.account_code)),
 							el("td", {}, el("button", { class: "btn", onclick: () => billAction("match", { transaction_id: t.id }) }, "This is the payment")),
 						),

@@ -11,6 +11,7 @@
 
 import { createHash } from "node:crypto";
 import { registerBills } from "./lib/bill-routes.mjs";
+import { dashboard } from "./lib/dashboard.mjs";
 import { candidateAccounts, examplesFromEntries, suggest } from "./lib/categorize.mjs";
 import { DEFAULTS, LlmError, PROVIDERS, completeJson } from "./lib/llm.mjs";
 import { ParseError, parseAmount, parseDate, parseStatement, payeeKey } from "./lib/parse.mjs";
@@ -24,6 +25,7 @@ export default async function register(ctx) {
 	const T = (name) => `${ctx.schema}.${name}`;
 	const q = (sql, params) => ctx.db.query(sql, params);
 	const bad = (msg) => new ctx.HttpError(422, msg);
+	const dash = dashboard(ctx);
 
 	// -----------------------------------------------------------------------
 	// Settings
@@ -76,6 +78,34 @@ export default async function register(ctx) {
 		return [...fromRules, ...fromBooks];
 	}
 
+	/** A dashboard notification per statement with transactions waiting to be posted; removed once none are left. */
+	async function syncStatementNotice(id) {
+		const key = `statement-${id}`;
+		const { review_threshold } = await readSettings();
+		const { rows } = await q(
+			`SELECT s.filename, s.account_code, s.status, s.error,
+			        count(t.id) FILTER (WHERE t.status = 'new')::int AS open,
+			        count(t.id) FILTER (WHERE t.status = 'new' AND (COALESCE(t.chosen_code, t.suggested_code) IS NULL
+			                            OR (t.chosen_code IS NULL AND COALESCE(t.confidence, 0) < $2)))::int AS review
+			   FROM ${T("statements")} s LEFT JOIN ${T("transactions")} t ON t.statement_id = s.id
+			  WHERE s.id = $1 GROUP BY s.id`,
+			[id, review_threshold],
+		);
+		const s = rows[0];
+		if (!s || (s.open === 0 && s.status !== "error")) return dash.remove(key, "notification");
+		if (s.status === "error") {
+			return dash.notify({ key, title: `${s.filename}: suggestions failed`.slice(0, 200), body: `${s.error ?? ""}\nRe-run them on the Statements tab.`.trim(), level: "danger", link: dash.link });
+		}
+		if (s.status === "queued" || s.status === "categorizing") return;
+		await dash.notify({
+			key,
+			title: `${s.filename}: ${s.open} transaction${s.open === 1 ? "" : "s"} to post`.slice(0, 200),
+			body: `${s.review > 0 ? `${s.review} need${s.review === 1 ? "s" : ""} review.` : "Every suggestion is confident."} Account ${s.account_code}.`,
+			level: s.review > 0 ? "warning" : "info",
+			link: dash.link,
+		});
+	}
+
 	// -----------------------------------------------------------------------
 	// Background categorisation (one statement at a time)
 	// -----------------------------------------------------------------------
@@ -126,10 +156,12 @@ export default async function register(ctx) {
 			const failed = v.filter((s) => s.source === "error");
 			const error = failed.length > 0 ? `${failed.length} of ${v.length} transactions could not be categorised: ${failed[0].reason}` : null;
 			await q(`UPDATE ${T("statements")} SET status = 'ready', error = $2, categorized_at = now() WHERE id = $1`, [id, error]);
+			await syncStatementNotice(id);
 			ctx.log.info("statement categorized", { statement: String(id), transactions: txs.length, failed: failed.length, ms: Date.now() - started });
 		} catch (err) {
 			const msg = err instanceof ctx.HttpError || err instanceof LlmError || err instanceof Error ? err.message : String(err);
 			await q(`UPDATE ${T("statements")} SET status = 'error', error = $2 WHERE id = $1`, [id, msg]);
+			await syncStatementNotice(id);
 			throw err;
 		}
 	}
@@ -354,6 +386,7 @@ export default async function register(ctx) {
 		// Posted rows stay so their fingerprints keep blocking duplicate uploads.
 		await q(`DELETE FROM ${T("transactions")} WHERE statement_id = $1 AND status <> 'posted'`, [statement.id]);
 		await q(`DELETE FROM ${T("statements")} s WHERE id = $1 AND NOT EXISTS (SELECT 1 FROM ${T("transactions")} t WHERE t.statement_id = s.id)`, [statement.id]);
+		await syncStatementNotice(statement.id);
 	});
 
 	// -----------------------------------------------------------------------
@@ -379,7 +412,11 @@ export default async function register(ctx) {
 			sets.push(`status = $${params.length}`);
 		}
 		if (sets.length === 0) throw bad("nothing to change: give account_code and/or status");
-		const { rowCount } = await q(`UPDATE ${T("transactions")} SET ${sets.join(", ")}, error = NULL WHERE id = ANY($1::bigint[]) AND status IN ('new', 'skipped')`, params);
+		const { rows, rowCount } = await q(
+			`UPDATE ${T("transactions")} SET ${sets.join(", ")}, error = NULL WHERE id = ANY($1::bigint[]) AND status IN ('new', 'skipped') RETURNING statement_id`,
+			params,
+		);
+		for (const sid of new Set(rows.map((r) => r.statement_id))) await syncStatementNotice(sid);
 		return { updated: rowCount };
 	}
 
@@ -452,6 +489,7 @@ export default async function register(ctx) {
 				results.failed.push({ id, error: msg });
 			}
 		}
+		await syncStatementNotice(statement.id);
 		ctx.log.info("transactions posted", { statement: String(statement.id), posted: results.posted, failed: results.failed.length, by: req.user.username });
 		return results;
 	});
