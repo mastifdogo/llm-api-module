@@ -1,12 +1,20 @@
-// Statement Categorizer: Ledger loads this file at startup and calls register(ctx).
+// LLM API (module id "categorizer"): Ledger loads this file at startup and calls register(ctx).
 // The module API is described in Ledger's docs/MODULES.md.
 //
 // Flow: upload a statement -> transactions are staged in this module's tables
 // -> a background job asks the LLM for an account per transaction -> you
 // review on the module's page -> posting creates one journal entry per
 // transaction through ctx.ledger.createJournalEntry and teaches a payee rule.
+//
+// Bills (lib/bill-routes.mjs): a scheduled mailbox check turns bill emails
+// into bills; transactions that pay them are matched before the LLM is asked.
+// Transfers (lib/transfer-sync.mjs): the two rows of a transfer between your
+// own accounts are linked and posted as one entry.
 
 import { createHash } from "node:crypto";
+import { registerBills } from "./lib/bill-routes.mjs";
+import { dashboard } from "./lib/dashboard.mjs";
+import { registerTransfers } from "./lib/transfer-sync.mjs";
 import { candidateAccounts, examplesFromEntries, suggest } from "./lib/categorize.mjs";
 import { DEFAULTS, LlmError, PROVIDERS, completeJson } from "./lib/llm.mjs";
 import { ParseError, parseAmount, parseDate, parseStatement, payeeKey } from "./lib/parse.mjs";
@@ -20,6 +28,7 @@ export default async function register(ctx) {
 	const T = (name) => `${ctx.schema}.${name}`;
 	const q = (sql, params) => ctx.db.query(sql, params);
 	const bad = (msg) => new ctx.HttpError(422, msg);
+	const dash = dashboard(ctx);
 
 	// -----------------------------------------------------------------------
 	// Settings
@@ -72,6 +81,34 @@ export default async function register(ctx) {
 		return [...fromRules, ...fromBooks];
 	}
 
+	/** A dashboard notification per statement with transactions waiting to be posted; removed once none are left. */
+	async function syncStatementNotice(id) {
+		const key = `statement-${id}`;
+		const { review_threshold } = await readSettings();
+		const { rows } = await q(
+			`SELECT s.filename, s.account_code, s.status, s.error,
+			        count(t.id) FILTER (WHERE t.status = 'new')::int AS open,
+			        count(t.id) FILTER (WHERE t.status = 'new' AND (COALESCE(t.chosen_code, t.suggested_code) IS NULL
+			                            OR (t.chosen_code IS NULL AND COALESCE(t.confidence, 0) < $2)))::int AS review
+			   FROM ${T("statements")} s LEFT JOIN ${T("transactions")} t ON t.statement_id = s.id
+			  WHERE s.id = $1 GROUP BY s.id`,
+			[id, review_threshold],
+		);
+		const s = rows[0];
+		if (!s || (s.open === 0 && s.status !== "error")) return dash.remove(key, "notification");
+		if (s.status === "error") {
+			return dash.notify({ key, title: `${s.filename}: suggestions failed`.slice(0, 200), body: `${s.error ?? ""}\nRe-run them on the Statements tab.`.trim(), level: "danger", link: dash.link });
+		}
+		if (s.status === "queued" || s.status === "categorizing") return;
+		await dash.notify({
+			key,
+			title: `${s.filename}: ${s.open} transaction${s.open === 1 ? "" : "s"} to post`.slice(0, 200),
+			body: `${s.review > 0 ? `${s.review} need${s.review === 1 ? "s" : ""} review.` : "Every suggestion is confident."} Account ${s.account_code}.`,
+			level: s.review > 0 ? "warning" : "info",
+			link: dash.link,
+		});
+	}
+
 	// -----------------------------------------------------------------------
 	// Background categorisation (one statement at a time)
 	// -----------------------------------------------------------------------
@@ -87,6 +124,8 @@ export default async function register(ctx) {
 		const { rows } = await q(`UPDATE ${T("statements")} SET status = 'categorizing', error = NULL WHERE id = $1 RETURNING account_code`, [id]);
 		if (rows.length === 0) return;
 		try {
+			// Payments of known bills don't need the model.
+			await bills.autoMatch();
 			const cfg = await readSettings();
 			const { account, accounts } = await statementAccount(rows[0].account_code);
 			const candidates = candidateAccounts(accounts, account);
@@ -94,7 +133,8 @@ export default async function register(ctx) {
 			const examples = await examplesFor(account, candidates, rules);
 			const { rows: txs } = await q(
 				`SELECT id, tx_date::text AS date, description, memo, amount_cents FROM ${T("transactions")}
-				  WHERE statement_id = $1 AND status = 'new' AND ($2 OR suggested_code IS NULL OR source = 'error')
+				  WHERE statement_id = $1 AND status = 'new' AND bill_id IS NULL AND transfer_tx_id IS NULL AND transfer_entry_id IS NULL
+				    AND ($2 OR suggested_code IS NULL OR source = 'error')
 				  ORDER BY line_no`,
 				[id, all],
 			);
@@ -117,16 +157,29 @@ export default async function register(ctx) {
 				  WHERE t.id = u.id AND t.status = 'new'`,
 				[ids, v.map((s) => s.code), v.map((s) => s.confidence), v.map((s) => s.reason), v.map((s) => s.source)],
 			);
+			// Rows that are one side of a transfer between your own accounts.
+			await transfers.matchTransfers();
 			const failed = v.filter((s) => s.source === "error");
 			const error = failed.length > 0 ? `${failed.length} of ${v.length} transactions could not be categorised: ${failed[0].reason}` : null;
 			await q(`UPDATE ${T("statements")} SET status = 'ready', error = $2, categorized_at = now() WHERE id = $1`, [id, error]);
+			await syncStatementNotice(id);
 			ctx.log.info("statement categorized", { statement: String(id), transactions: txs.length, failed: failed.length, ms: Date.now() - started });
 		} catch (err) {
 			const msg = err instanceof ctx.HttpError || err instanceof LlmError || err instanceof Error ? err.message : String(err);
 			await q(`UPDATE ${T("statements")} SET status = 'error', error = $2 WHERE id = $1`, [id, msg]);
+			await syncStatementNotice(id);
 			throw err;
 		}
 	}
+
+	const requeue = async (ids) => {
+		for (const sid of ids) {
+			const { rowCount } = await q(`UPDATE ${T("statements")} SET status = 'queued' WHERE id = $1 AND status IN ('ready', 'error')`, [sid]);
+			if (rowCount > 0) enqueue(sid);
+		}
+	};
+	const bills = registerBills(ctx, { q, T, bad, readSettings, requeue });
+	const transfers = registerTransfers(ctx, { q, T, bad, requeue });
 
 	// Resume work interrupted by a restart (not awaited: register must finish quickly).
 	const { rows: unfinished } = await q(`SELECT id FROM ${T("statements")} WHERE status IN ('queued', 'categorizing') ORDER BY id`);
@@ -311,9 +364,14 @@ export default async function register(ctx) {
 	ctx.route("GET", "/statements/:id", async (req) => {
 		const statement = await getStatement(req.params.id);
 		const { rows } = await q(
-			`SELECT id, line_no, tx_date::text AS date, description, memo, amount_cents, fitid, suggested_code, confidence, reason, source,
-			        chosen_code, COALESCE(chosen_code, suggested_code) AS account_code, status, journal_entry_id, error, posted_by, posted_at
-			   FROM ${T("transactions")} WHERE statement_id = $1 ORDER BY line_no, id`,
+			`SELECT t.id, t.line_no, t.tx_date::text AS date, t.description, t.memo, t.amount_cents, t.fitid, t.suggested_code, t.confidence, t.reason, t.source,
+			        t.chosen_code, COALESCE(t.chosen_code, t.suggested_code) AS account_code, t.status, t.journal_entry_id, t.error, t.posted_by, t.posted_at,
+			        t.bill_id, b.vendor AS bill_vendor, b.status AS bill_status,
+			        t.transfer_tx_id, t.transfer_entry_id, o.account_code AS transfer_account, o.tx_date::text AS transfer_date,
+			        o.description AS transfer_description, o.status AS transfer_status, o.statement_id AS transfer_statement_id
+			   FROM ${T("transactions")} t LEFT JOIN ${T("bills")} b ON b.id = t.bill_id
+			   LEFT JOIN ${T("transactions")} o ON o.id = t.transfer_tx_id
+			  WHERE t.statement_id = $1 ORDER BY t.line_no, t.id`,
 			[statement.id],
 		);
 		const { review_threshold } = await readSettings();
@@ -333,6 +391,7 @@ export default async function register(ctx) {
 		// Posted rows stay so their fingerprints keep blocking duplicate uploads.
 		await q(`DELETE FROM ${T("transactions")} WHERE statement_id = $1 AND status <> 'posted'`, [statement.id]);
 		await q(`DELETE FROM ${T("statements")} s WHERE id = $1 AND NOT EXISTS (SELECT 1 FROM ${T("transactions")} t WHERE t.statement_id = s.id)`, [statement.id]);
+		await syncStatementNotice(statement.id);
 	});
 
 	// -----------------------------------------------------------------------
@@ -358,7 +417,12 @@ export default async function register(ctx) {
 			sets.push(`status = $${params.length}`);
 		}
 		if (sets.length === 0) throw bad("nothing to change: give account_code and/or status");
-		const { rowCount } = await q(`UPDATE ${T("transactions")} SET ${sets.join(", ")}, error = NULL WHERE id = ANY($1::bigint[]) AND status IN ('new', 'skipped')`, params);
+		const { rows, rowCount } = await q(
+			`UPDATE ${T("transactions")} SET ${sets.join(", ")}, error = NULL WHERE id = ANY($1::bigint[]) AND status IN ('new', 'skipped') RETURNING statement_id`,
+			params,
+		);
+		if (b.account_code !== undefined || b.status !== undefined) await transfers.matchTransfers();
+		for (const sid of new Set(rows.map((r) => r.statement_id))) await syncStatementNotice(sid);
 		return { updated: rowCount };
 	}
 
@@ -392,19 +456,43 @@ export default async function register(ctx) {
 			  ORDER BY tx_date, line_no`,
 			[statement.id, only === undefined ? null : only.map(String)],
 		);
-		const results = { posted: 0, failed: [] };
+		const results = { posted: 0, already_recorded: 0, failed: [] };
+		const otherStatements = new Set();
 		for (const { id } of rows) {
 			// Claim the row so a double click cannot post it twice.
 			const claim = await q(
 				`UPDATE ${T("transactions")} SET status = 'posting' WHERE id = $1 AND status = 'new'
-				 RETURNING tx_date::text AS date, description, memo, amount_cents, fitid, account_code, COALESCE(chosen_code, suggested_code) AS code`,
+				 RETURNING tx_date::text AS date, description, memo, amount_cents, fitid, account_code, COALESCE(chosen_code, suggested_code) AS code, bill_id,
+				           transfer_tx_id, transfer_entry_id`,
 				[id],
 			);
 			if (claim.rowCount === 0) continue;
 			const t = claim.rows[0];
 			const amt = t.amount_cents;
 			const abs = amt < 0n ? -amt : amt;
+			const markPosted = (entryId) =>
+				q(`UPDATE ${T("transactions")} SET status = 'posted', journal_entry_id = $2, posted_by = $3, posted_at = now(), error = NULL WHERE id = $1`, [
+					id,
+					entryId,
+					req.user.username,
+				]);
 			try {
+				// One side of a transfer that is already in the journal: nothing new to post.
+				let existing = null;
+				if (t.transfer_entry_id !== null) {
+					const e = await ctx.ledger.getJournalEntry(t.transfer_entry_id);
+					if (e.reversed_by_id) throw new Error(`the linked journal entry #${e.id} was reversed; use "Not a transfer" and post this again`);
+					existing = e.id;
+				} else if (t.transfer_tx_id !== null) {
+					const { rows: o } = await q(`SELECT status, journal_entry_id FROM ${T("transactions")} WHERE id = $1`, [t.transfer_tx_id]);
+					if (o[0]?.status === "posted" && o[0].journal_entry_id !== null) existing = o[0].journal_entry_id;
+				}
+				if (existing !== null) {
+					await markPosted(existing);
+					results.posted++;
+					results.already_recorded++;
+					continue;
+				}
 				const entry = await ctx.ledger.createJournalEntry(
 					{
 						entry_date: t.date,
@@ -417,11 +505,19 @@ export default async function register(ctx) {
 					},
 					req.user,
 				);
-				await q(
-					`UPDATE ${T("transactions")} SET status = 'posted', journal_entry_id = $2, posted_by = $3, posted_at = now(), error = NULL WHERE id = $1`,
-					[id, entry.id, req.user.username],
-				);
-				await learn(t.description, t.code, req.user.username);
+				await markPosted(entry.id);
+				// The other side of a transfer is recorded by this same entry.
+				if (t.transfer_tx_id !== null) {
+					const { rows: other } = await q(
+						`UPDATE ${T("transactions")} SET status = 'posted', journal_entry_id = $2, posted_by = $3, posted_at = now(), error = NULL, reason = $4
+						  WHERE id = $1 AND status = 'new' AND COALESCE(chosen_code, suggested_code) = $5 RETURNING statement_id`,
+						[t.transfer_tx_id, entry.id, req.user.username, `recorded with the transfer from ${t.account_code} (entry #${entry.id})`, t.account_code],
+					);
+					for (const r of other) otherStatements.add(r.statement_id);
+				}
+				// A bill payment marks the bill paid; it isn't a payee rule (it books to payables).
+				const paidBill = t.bill_id !== null && (await bills.onPosted(id, t.code, entry.id));
+				if (!paidBill) await learn(t.description, t.code, req.user.username);
 				results.posted++;
 			} catch (err) {
 				const msg = String(err?.message || err).slice(0, 500);
@@ -429,6 +525,10 @@ export default async function register(ctx) {
 				results.failed.push({ id, error: msg });
 			}
 		}
+		await syncStatementNotice(statement.id);
+		for (const sid of otherStatements) if (String(sid) !== String(statement.id)) await syncStatementNotice(sid);
+		// New entries can be the recorded side of transfers still waiting on other statements.
+		if (results.posted > 0) await transfers.matchTransfers();
 		ctx.log.info("transactions posted", { statement: String(statement.id), posted: results.posted, failed: results.failed.length, by: req.user.username });
 		return results;
 	});
@@ -468,5 +568,5 @@ export default async function register(ctx) {
 		};
 	});
 
-	ctx.log.info("categorizer ready", { resumed: unfinished.length });
+	ctx.log.info("LLM API module ready", { resumed: unfinished.length });
 }

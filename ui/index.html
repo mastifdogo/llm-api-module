@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Statement Categorizer</title>
+<title>LLM API</title>
 <style>
 	:root {
 		--bg: #fff; --panel: #f6f8fa; --text: #1d232b; --muted: #5d6875; --border: #dde1e6; --accent: #1f6feb;
@@ -18,24 +18,24 @@
 		}
 	}
 	* { box-sizing: border-box; }
-	body { margin: 0; padding: 1rem 1.25rem 3rem; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, sans-serif; }
+	body { margin: 0; padding: 1rem 1.25rem 3rem; background: var(--bg); color: var(--text); font: 15px/1.45 system-ui, sans-serif; }
 	h1 { font-size: 1.35rem; margin: 0 0 0.75rem; }
 	h2 { font-size: 1.05rem; margin: 1.25rem 0 0.5rem; }
 	.muted { color: var(--muted); }
-	.small { font-size: 12px; }
-	nav.tabs { display: flex; gap: 0.25rem; border-bottom: 1px solid var(--border); margin-bottom: 1rem; flex-wrap: wrap; }
-	nav.tabs button { border: 0; background: none; color: var(--muted); padding: 0.5rem 0.8rem; border-bottom: 2px solid transparent; cursor: pointer; font: inherit; }
+	.small { font-size: 13px; }
+	nav.tabs { display: flex; gap: 0.25rem; border-bottom: 1px solid var(--border); margin-bottom: 1rem; overflow-x: auto; }
+	nav.tabs button { border: 0; background: none; color: var(--muted); padding: 0.5rem 0.8rem; border-bottom: 2px solid transparent; cursor: pointer; font: inherit; white-space: nowrap; }
 	nav.tabs button.active { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
-	.panel { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 1rem; }
-	.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0.75rem 1rem; }
+	.panel { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 1rem; }
+	.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr)); gap: 0.75rem 1rem; }
 	label { display: flex; flex-direction: column; gap: 0.25rem; font-weight: 500; }
 	label.inline { flex-direction: row; align-items: center; gap: 0.4rem; font-weight: normal; }
 	input, select { padding: 0.4rem 0.55rem; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: inherit; font: inherit; min-width: 0; }
 	input[type=checkbox] { padding: 0; }
-	button.btn { padding: 0.4rem 0.8rem; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); font: inherit; cursor: pointer; white-space: nowrap; }
-	button.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-	button.btn.danger { color: var(--bad); }
-	button.btn:disabled { opacity: 0.5; cursor: default; }
+	.btn { padding: 0.4rem 0.8rem; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); font: inherit; cursor: pointer; white-space: nowrap; }
+	.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+	.btn.danger { color: var(--bad); }
+	.btn:disabled { opacity: 0.5; cursor: default; }
 	.row { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
 	.spacer { flex: 1; }
 	table { width: 100%; border-collapse: collapse; }
@@ -54,6 +54,24 @@
 	.pill.bad { background: var(--bad-bg); color: var(--bad); }
 	.pill.plain { background: var(--panel); color: var(--muted); border: 1px solid var(--border); }
 	td select { width: 100%; max-width: 280px; }
+	textarea, .grid input, .grid select { width: 100%; }
+	/* Narrow panes (Ledger's side-by-side view, phones): tables become stacked rows. */
+	@media (max-width: 640px) {
+		body { padding: 0.75rem 0.75rem 3rem; }
+		h1 { font-size: 1.15rem; }
+		.panel { padding: 0.75rem; }
+		table.stack thead { display: none; }
+		table.stack tr { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.2rem 0.6rem; padding: 0.55rem 0; border-bottom: 1px solid var(--border); }
+		table.stack td { border: 0; padding: 0; }
+		table.stack td.wide { flex-basis: 100%; }
+		table.stack td.num { margin-left: auto; }
+		td select { max-width: none; }
+		.desc { max-width: none; }
+		.row > .spacer { display: none; }
+		label.inline { flex-wrap: wrap; }
+		#toast { left: 0.75rem; right: 0.75rem; max-width: none; }
+		iframe.pdf { height: 360px; }
+	}
 	.desc { max-width: 380px; overflow-wrap: anywhere; }
 	.reason { color: var(--muted); font-size: 12px; margin-top: 2px; }
 	.err { color: var(--bad); font-size: 12px; margin-top: 2px; }
@@ -61,14 +79,21 @@
 	#toast.error { background: var(--bad); color: #fff; }
 	.table-wrap { overflow-x: auto; }
 	.hidden { display: none !important; }
+	.bill-detail { margin-top: 1rem; }
+	.bill-detail h2 { margin-top: 0; }
+	.mailbody { white-space: pre-wrap; max-height: 260px; overflow: auto; font-size: 12px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 0.5rem; }
+	iframe.pdf { width: 100%; height: 520px; border: 1px solid var(--border); border-radius: 6px; background: #fff; }
+	tr.selected td { background: var(--panel); }
+	textarea { padding: 0.4rem 0.55rem; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: inherit; font: inherit; }
 	.spin { display: inline-block; width: 12px; height: 12px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; vertical-align: -1px; }
 	@keyframes spin { to { transform: rotate(360deg); } }
 </style>
 </head>
 <body>
-<h1>Statement Categorizer</h1>
+<h1>LLM API</h1>
 <nav class="tabs">
 	<button data-tab="review" class="active">Statements</button>
+	<button data-tab="bills">Bills</button>
 	<button data-tab="upload">Upload</button>
 	<button data-tab="rules">Learned rules</button>
 	<button data-tab="settings">Settings</button>
@@ -79,7 +104,7 @@
 	<div id="list-view">
 		<div class="row"><span class="muted" id="list-empty">No statements yet. Upload one to get suggestions.</span></div>
 		<div class="table-wrap">
-			<table id="statements" class="hidden">
+			<table id="statements" class="stack hidden">
 				<thead><tr><th>File</th><th>Account</th><th>Dates</th><th>Status</th><th class="num">Posted</th><th class="num">Uploaded</th></tr></thead>
 				<tbody></tbody>
 			</table>
@@ -117,7 +142,7 @@
 			<button class="btn primary" id="post">Post selected</button>
 		</div>
 		<div class="table-wrap">
-			<table id="txs">
+			<table id="txs" class="stack">
 				<thead><tr>
 					<th><input type="checkbox" id="sel-all" title="Select all shown"></th>
 					<th>Date</th><th>Description</th><th class="num">Amount</th><th>Account</th><th>Confidence</th>
@@ -125,6 +150,73 @@
 				<tbody></tbody>
 			</table>
 		</div>
+	</div>
+</section>
+
+<!-- Bills -->
+<section id="tab-bills" class="hidden">
+	<div class="panel row">
+		<label class="inline">Show
+			<select id="b-filter">
+				<option value="unpaid">To be paid</option>
+				<option value="new">Needs review</option>
+				<option value="open">Approved, unpaid</option>
+				<option value="paid">Paid</option>
+				<option value="ignored">Ignored</option>
+				<option value="">All</option>
+			</select>
+		</label>
+		<span class="spacer"></span>
+		<span id="b-mail-status" class="muted small"></span>
+		<button class="btn" id="b-check">Check email now</button>
+		<label class="btn" style="display:inline-block; font-weight:normal">Upload bill (PDF or .eml)<input type="file" id="b-file" accept=".pdf,.eml,application/pdf,message/rfc822" class="hidden"></label>
+		<button class="btn" id="b-add">Add by hand</button>
+	</div>
+	<p class="muted small">Bills are read from your mailbox on a schedule (set it up under Settings → Email). Approve a bill once its details are right. When a statement contains its payment, the transaction is matched to the bill automatically, and posting it marks the bill paid.</p>
+	<div class="table-wrap">
+		<table id="bills" class="stack">
+			<thead><tr><th>Due</th><th>Vendor</th><th>Invoice</th><th class="num">Amount</th><th>Account</th><th>Status</th><th>Payment</th></tr></thead>
+			<tbody></tbody>
+		</table>
+	</div>
+
+	<div id="bill-detail" class="panel bill-detail hidden">
+		<div class="row">
+			<h2 id="bd-title"></h2>
+			<span id="bd-status"></span>
+			<span class="spacer"></span>
+			<button class="btn" id="bd-close">Close</button>
+		</div>
+		<p class="err" id="bd-error"></p>
+		<form id="bd-form" class="grid">
+			<label>Type <select id="bd-kind"><option value="bill">Bill (to be paid)</option><option value="receipt">Receipt (already paid)</option></select></label>
+			<label>Vendor <input id="bd-vendor" maxlength="200"></label>
+			<label>Invoice number <input id="bd-invoice" maxlength="100"></label>
+			<label>Bill date <input id="bd-date" type="date"></label>
+			<label>Due date <input id="bd-due" type="date"></label>
+			<label>Amount <input id="bd-amount" inputmode="decimal" placeholder="0.00"></label>
+			<label>Currency <select id="bd-currency"><option>CAD</option><option>USD</option></select></label>
+			<label>Account <select id="bd-account"></select></label>
+		</form>
+		<p class="muted small" id="bd-summary"></p>
+		<div class="row" style="margin: 0.75rem 0">
+			<button class="btn" id="bd-save">Save changes</button>
+			<button class="btn primary" id="bd-approve">Approve</button>
+			<button class="btn" id="bd-unapprove">Undo approval</button>
+			<button class="btn" id="bd-paid">Mark paid (paid elsewhere)</button>
+			<button class="btn" id="bd-reopen">Reopen</button>
+			<button class="btn danger" id="bd-ignore">Ignore</button>
+			<button class="btn danger" id="bd-delete">Delete</button>
+		</div>
+		<p class="muted small" id="bd-ap-note"></p>
+		<h2>Payment</h2>
+		<div id="bd-payments"></div>
+		<div id="bd-candidates"></div>
+		<h2>Source</h2>
+		<p class="small" id="bd-source"></p>
+		<button class="btn hidden" id="bd-show-doc">Show PDF</button>
+		<div id="bd-doc"></div>
+		<div class="mailbody hidden" id="bd-body"></div>
 	</div>
 </section>
 
@@ -157,7 +249,7 @@
 <section id="tab-rules" class="hidden">
 	<p class="muted">Each time you post a transaction, its payee is remembered with the account you chose. Matching payees get that account straight away, without asking the model.</p>
 	<div class="table-wrap">
-		<table id="rules">
+		<table id="rules" class="stack">
 			<thead><tr><th>Payee</th><th>Account</th><th>Example</th><th class="num">Times</th><th></th></tr></thead>
 			<tbody></tbody>
 		</table>
@@ -191,6 +283,32 @@
 			<button class="btn" type="button" id="s-test">Test connection</button>
 			<button class="btn danger" type="button" id="s-clear-key">Remove stored key</button>
 			<span id="s-msg" class="muted"></span>
+		</div>
+	</form>
+
+	<h2>Email (bills)</h2>
+	<form id="mail" class="panel">
+		<div class="grid">
+			<label>IMAP server <input id="m-host" placeholder="imap.gmail.com" autocomplete="off"></label>
+			<label>Port <input id="m-port" type="number" min="1" max="65535" placeholder="993"></label>
+			<label>User name <input id="m-user" autocomplete="off" placeholder="you@example.com"></label>
+			<label>Password <input id="m-pass" type="password" autocomplete="new-password"></label>
+			<label>Folder or label <input id="m-folder" placeholder="INBOX"></label>
+			<label>Check every (minutes, 0 = off) <input id="m-interval" type="number" min="0" max="10080"></label>
+			<label>First check looks back (days) <input id="m-lookback" type="number" min="1" max="365"></label>
+			<label>Accounts payable account <select id="m-ap"></select></label>
+		</div>
+		<label style="margin-top:0.75rem">Only send emails containing one of these words to the model (comma-separated; empty = every email)
+			<textarea id="m-keywords" rows="2"></textarea>
+		</label>
+		<p class="muted small" id="m-pass-note"></p>
+		<p class="muted small">Gmail and iCloud need an <em>app password</em> (with 2-step verification on); Outlook.com and Microsoft 365 need IMAP enabled. The mailbox is opened read-only, so nothing is marked as read or moved. A dedicated folder or label (e.g. a filter that labels bills) keeps unrelated mail away from the model.</p>
+		<p class="muted small">With an accounts payable account, approving a bill posts it there (debit the bill's account, credit payables) and its payment from the bank clears it. Without one, bills are only tracked and the payment is booked straight to the bill's account.</p>
+		<div class="row">
+			<button class="btn primary">Save</button>
+			<button class="btn" type="button" id="m-test">Test connection</button>
+			<button class="btn danger" type="button" id="m-clear-pass">Remove stored password</button>
+			<span id="m-msg" class="muted"></span>
 		</div>
 	</form>
 </section>
@@ -230,19 +348,17 @@
 		toastTimer = setTimeout(() => (t.style.display = "none"), isError ? 8000 : 3500);
 	}
 	const fail = (e) => toast(e.message || String(e), true);
-	const money = (cents) => {
-		const n = Number(cents) / 100;
-		return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-	};
+	const money = (cents) => (Number(cents) / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 	const TYPE_ORDER = ["expense", "revenue", "asset", "liability", "equity"];
 
 	// ---------------------------------------------------------------- tabs
 	function showTab(name) {
 		document.querySelectorAll("nav.tabs button").forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
-		for (const t of ["review", "upload", "rules", "settings"]) $(`tab-${t}`).classList.toggle("hidden", t !== name);
+		for (const t of ["review", "bills", "upload", "rules", "settings"]) $(`tab-${t}`).classList.toggle("hidden", t !== name);
+		if (name === "bills") loadBills().catch(fail);
 		if (name === "review") loadStatements().catch(fail);
 		if (name === "rules") loadRules().catch(fail);
-		if (name === "settings") loadSettings().catch(fail);
+		if (name === "settings") { loadSettings().catch(fail); loadMail().catch(fail); }
 		if (name === "upload") loadUploadAccounts().catch(fail);
 	}
 	document.querySelectorAll("nav.tabs button").forEach((b) => (b.onclick = () => { closeDetail(); showTab(b.dataset.tab); }));
@@ -329,7 +445,7 @@
 		$("statements").tBodies[0].replaceChildren(
 			...data.map((s) =>
 				el("tr", { class: "clickable", onclick: () => openStatement(s.id) },
-					el("td", {}, s.filename),
+					el("td", { class: "wide" }, s.filename),
 					el("td", {}, accountLabel(s.account_code)),
 					el("td", {}, s.first_date ? `${s.first_date} – ${s.last_date}` : "—"),
 					el("td", {}, statusPill(s.status)),
@@ -392,6 +508,7 @@
 		$("rerun").disabled = busy;
 
 		const candidates = accounts.filter((a) => a.code !== s.account_code && (!stmtAccount || a.currency === stmtAccount.currency));
+		const cur = stmtAccount?.currency ?? "";
 		accountOptions($("bulk-account"), candidates, { placeholder: "—" });
 		$("bulk-account").value = "";
 
@@ -406,10 +523,19 @@
 				cb.checked = selected.has(t.id);
 				cb.onchange = () => { cb.checked ? selected.add(t.id) : selected.delete(t.id); updateButtons(); };
 				let conf;
-				if (t.status === "posted") conf = el("span", { class: "pill good" }, `Posted #${t.journal_entry_id}`);
+				if (t.status === "posted") conf = el("span", { class: "pill good" }, `Posted #${t.journal_entry_id}`, t.bill_id ? " · bill" : t.transfer_tx_id || t.transfer_entry_id ? " · transfer" : "");
 				else if (t.status === "skipped") conf = el("span", { class: "pill plain" }, "Skipped");
 				else if (t.chosen_code) conf = el("span", { class: "pill good" }, "Your choice");
 				else if (t.source === "error") conf = el("span", { class: "pill bad" }, "Failed");
+				else if (t.source === "transfer") {
+					const pct = Math.round((t.confidence ?? 0) * 100);
+					conf = el("span", { class: `pill ${t.confidence >= current.review_threshold ? "good" : "warn"}`, title: "One side of a transfer between your accounts" },
+						t.transfer_entry_id ? "Already recorded" : `Transfer ${pct}%`);
+				}
+				else if (t.source === "bill" && t.confidence != null) {
+					const pct = Math.round(t.confidence * 100);
+					conf = el("span", { class: `pill ${t.confidence >= current.review_threshold ? "good" : "warn"}`, title: "Matched to a bill" }, `Bill ${pct}%`);
+				}
 				else if (t.confidence == null) conf = el("span", { class: "pill plain" }, busy ? "Waiting…" : "—");
 				else {
 					const pct = Math.round(t.confidence * 100);
@@ -418,10 +544,12 @@
 				return el("tr", { class: t.status },
 					el("td", {}, cb),
 					el("td", { class: "nowrap" }, t.date),
-					el("td", { class: "desc" }, t.description, t.memo ? el("div", { class: "reason" }, t.memo) : null),
-					el("td", { class: `num ${t.amount_cents < 0 ? "neg" : "pos"}` }, money(t.amount_cents)),
-					el("td", {}, sel, t.chosen_code && t.suggested_code && t.chosen_code !== t.suggested_code ? el("div", { class: "reason" }, `Suggested: ${accountLabel(t.suggested_code)}`) : null),
-					el("td", {}, conf, t.reason && t.status === "new" ? el("div", { class: t.source === "error" ? "err" : "reason" }, t.reason) : null, t.error ? el("div", { class: "err" }, t.error) : null),
+					el("td", { class: "desc wide" }, t.description, t.memo ? el("div", { class: "reason" }, t.memo) : null),
+					el("td", { class: `num ${t.amount_cents < 0 ? "neg" : "pos"}` }, `${money(t.amount_cents)} ${cur}`),
+					el("td", { class: "wide" }, sel, t.chosen_code && t.suggested_code && t.chosen_code !== t.suggested_code ? el("div", { class: "reason" }, `Suggested: ${accountLabel(t.suggested_code)}`) : null),
+					el("td", { class: "wide" }, conf, t.reason && t.status === "new" ? el("div", { class: t.source === "error" ? "err" : "reason" }, t.reason) : null, t.error ? el("div", { class: "err" }, t.error) : null,
+						open && (t.transfer_tx_id || t.transfer_entry_id) ? el("button", { class: "btn", style: "margin-top:4px", onclick: () => notTransfer(t.id) }, "Not a transfer") : null,
+						t.status === "posted" && t.reason.startsWith("recorded with the transfer") ? el("div", { class: "reason" }, t.reason) : null),
 				);
 			}),
 		);
@@ -445,6 +573,14 @@
 	};
 	$("sel-confident").onclick = () => { for (const t of current.transactions) if (isConfident(t)) selected.add(t.id); renderDetail(); };
 	$("sel-none").onclick = () => { selected = new Set(); renderDetail(); };
+
+	async function notTransfer(id) {
+		try {
+			await api(`/transactions/${id}/not-transfer`, { method: "POST" });
+			toast("Unlinked. Both rows get a fresh suggestion.");
+			await refresh();
+		} catch (e) { fail(e); }
+	}
 
 	async function setAccount(ids, code) {
 		try {
@@ -479,7 +615,8 @@
 		try {
 			const r = await api(`/statements/${current.statement.id}/post`, { method: "POST", body: JSON.stringify({ ids }) });
 			selected = new Set();
-			toast(`Posted ${r.posted} entr${r.posted === 1 ? "y" : "ies"}.` + (r.failed.length ? `\n${r.failed.length} failed: ${r.failed[0].error}` : ""), r.failed.length > 0);
+			const made = r.posted - (r.already_recorded || 0);
+			toast(`Posted ${made} entr${made === 1 ? "y" : "ies"}.` + (r.already_recorded ? ` ${r.already_recorded} already in the journal as transfers.` : "") + (r.failed.length ? `\n${r.failed.length} failed: ${r.failed[0].error}` : ""), r.failed.length > 0);
 			await refresh();
 		} catch (e) { fail(e); updateButtons(); }
 	};
@@ -510,7 +647,7 @@
 				el("tr", {},
 					el("td", {}, r.payee_key),
 					el("td", {}, accountLabel(r.account_code)),
-					el("td", { class: "muted desc" }, r.example),
+					el("td", { class: "muted desc wide" }, r.example),
 					el("td", { class: "num" }, String(r.hits)),
 					el("td", { class: "num" }, el("button", { class: "btn danger", onclick: async () => {
 						try { await api(`/rules/${encodeURIComponent(r.payee_key)}`, { method: "DELETE" }); await loadRules(); } catch (e) { fail(e); }
@@ -585,6 +722,289 @@
 			const r = await api("/settings/test", { method: "POST" });
 			$("s-msg").textContent = r.ok ? `Works: ${r.model} answered in ${(r.ms / 1000).toFixed(1)} s.` : `Failed: ${r.error || "unexpected answer"}`;
 		} catch (err) { $("s-msg").textContent = ""; fail(err); }
+	};
+
+	// ---------------------------------------------------------------- bills
+	const BILL_STATUS = { new: ["warn", "Needs review"], open: ["plain", "Approved"], paid: ["good", "Paid"], ignored: ["plain", "Ignored"] };
+	let billsList = [];
+	let currentBill = null;
+
+	function mailStatusText(m) {
+		if (!m.imap_host) return "Email not set up";
+		const st = m.state || {};
+		if (m.running) return "Checking email…";
+		if (!st.last_check_at) return m.mail_interval > 0 ? `Checks every ${m.mail_interval} min` : "Scheduled checks off";
+		const when = new Date(st.last_check_at).toLocaleString();
+		if (st.error) return `Last check ${when} failed: ${st.error}`;
+		const r = st.result || {};
+		return `Last check ${when}: ${r.bills || 0} bills, ${r.receipts || 0} receipts from ${r.looked_at || 0} new emails` + (r.remaining ? ` (${r.remaining} more next time)` : "");
+	}
+
+	async function loadBills() {
+		if (accounts.length === 0) await loadAccounts();
+		const [list, mail] = await Promise.all([api(`/bills?status=${encodeURIComponent($("b-filter").value)}`), api("/mail/settings")]);
+		billsList = list.data;
+		$("b-mail-status").textContent = mailStatusText(mail);
+		const body = $("bills").tBodies[0];
+		if (billsList.length === 0) {
+			body.replaceChildren(el("tr", {}, el("td", { colspan: 7, class: "muted" }, "No bills here.")));
+			return;
+		}
+		const today = new Date().toISOString().slice(0, 10);
+		body.replaceChildren(
+			...billsList.map((b) => {
+				const [cls, text] = BILL_STATUS[b.status] || ["plain", b.status];
+				const overdue = b.due_date && b.due_date < today && ["new", "open"].includes(b.status);
+				const payment = b.transaction_id
+					? el("span", { class: `pill ${b.transaction_status === "posted" ? "good" : "plain"}` }, b.transaction_status === "posted" ? "Posted" : "Matched")
+					: el("span", { class: "muted" }, b.kind === "receipt" ? "receipt" : "—");
+				return el("tr", { class: `clickable ${currentBill?.id === b.id ? "selected" : ""}`, onclick: () => openBill(b.id) },
+					el("td", { class: `nowrap ${overdue ? "neg" : ""}` }, b.due_date || (b.bill_date ? `(${b.bill_date})` : "—")),
+					el("td", { class: "wide" }, b.vendor || el("span", { class: "muted" }, b.mail_subject || "(unknown)")),
+					el("td", {}, b.invoice_number),
+					el("td", { class: "num" }, b.amount_cents == null ? "—" : `${money(b.amount_cents)} ${b.currency}`),
+					el("td", {}, b.account_code ? accountLabel(b.account_code) : el("span", { class: "muted" }, "—")),
+					el("td", {}, el("span", { class: `pill ${cls}` }, text), b.error ? el("div", { class: "err" }, "!") : null),
+					el("td", {}, payment),
+				);
+			}),
+		);
+	}
+	$("b-filter").onchange = () => loadBills().catch(fail);
+
+	$("b-check").onclick = async () => {
+		$("b-check").disabled = true;
+		$("b-mail-status").textContent = "Checking email…";
+		try {
+			const r = await api("/mail/check", { method: "POST" });
+			if (r.error) toast(`Email check failed: ${r.error}`, true);
+			else if (r.skipped) toast(r.skipped);
+			else toast(`Looked at ${r.looked_at} new emails: ${r.bills} bills, ${r.receipts} receipts, ${r.duplicates} repeats.`);
+			await loadBills();
+		} catch (e) { fail(e); } finally { $("b-check").disabled = false; }
+	};
+
+	$("b-file").onchange = async () => {
+		const file = $("b-file").files[0];
+		$("b-file").value = "";
+		if (!file) return;
+		if (file.size > 700_000) return toast("That file is over 700 KB, too large to upload here.", true);
+		const bytes = new Uint8Array(await file.arrayBuffer());
+		let bin = "";
+		for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+		toast("Reading the bill…");
+		try {
+			const b = await api("/bills/upload", { method: "POST", body: JSON.stringify({ filename: file.name, content_base64: btoa(bin) }) });
+			$("b-filter").value = "unpaid";
+			await loadBills();
+			openBill(b.id);
+		} catch (e) { fail(e); }
+	};
+
+	$("b-add").onclick = async () => {
+		const vendor = prompt("Vendor name");
+		if (!vendor) return;
+		try {
+			const b = await api("/bills", { method: "POST", body: JSON.stringify({ vendor }) });
+			await loadBills();
+			openBill(b.id);
+		} catch (e) { fail(e); }
+	};
+
+	async function openBill(id) {
+		const r = await api(`/bills/${id}`).catch(fail);
+		if (!r) return;
+		currentBill = r.bill;
+		renderBill(r.bill, r.payments);
+		document.querySelectorAll("#bills tbody tr").forEach((tr, i) => tr.classList.toggle("selected", billsList[i]?.id === id));
+		$("bill-detail").classList.remove("hidden");
+		$("bill-detail").scrollIntoView({ behavior: "smooth", block: "start" });
+	}
+	$("bd-close").onclick = () => { currentBill = null; $("bill-detail").classList.add("hidden"); loadBills().catch(fail); };
+
+	function renderBill(b, payments) {
+		const [cls, text] = BILL_STATUS[b.status] || ["plain", b.status];
+		$("bd-title").textContent = `${b.vendor || "Bill"}${b.invoice_number ? ` #${b.invoice_number}` : ""}`;
+		$("bd-status").replaceChildren(el("span", { class: `pill ${cls}` }, text), b.journal_entry_id ? el("span", { class: "pill plain" }, ` In payables (entry #${b.journal_entry_id})`) : "");
+		$("bd-error").textContent = b.error || "";
+		$("bd-kind").value = b.kind;
+		$("bd-vendor").value = b.vendor;
+		$("bd-invoice").value = b.invoice_number;
+		$("bd-date").value = b.bill_date || "";
+		$("bd-due").value = b.due_date || "";
+		$("bd-amount").value = b.amount_cents == null ? "" : (Number(b.amount_cents) / 100).toFixed(2);
+		$("bd-currency").value = b.currency;
+		accountOptions($("bd-account"), accounts.filter((a) => a.currency === b.currency), { selected: b.account_code, placeholder: "Choose account…" });
+		const locked = !!b.journal_entry_id;
+		for (const id of ["bd-kind", "bd-date", "bd-amount", "bd-currency", "bd-account"]) $(id).disabled = locked || b.status === "paid";
+		const summary = b.summary && !/[.!?]$/.test(b.summary) ? `${b.summary}.` : b.summary;
+		$("bd-summary").textContent = [summary, b.confidence != null ? `Read with ${Math.round(b.confidence * 100)}% confidence.` : ""].filter(Boolean).join(" ");
+		const open = ["new", "open"].includes(b.status);
+		$("bd-approve").classList.toggle("hidden", b.status !== "new");
+		$("bd-unapprove").classList.toggle("hidden", !(b.status === "open"));
+		$("bd-paid").classList.toggle("hidden", !open);
+		$("bd-reopen").classList.toggle("hidden", !["ignored", "paid"].includes(b.status) || !!b.paid_entry_id);
+		$("bd-ignore").classList.toggle("hidden", !open || locked);
+		$("bd-delete").classList.toggle("hidden", locked || b.status === "paid");
+		$("bd-ap-note").textContent = b.status === "new" && b.kind === "bill" ? "Approving posts this bill to accounts payable if one is set under Settings → Email." : "";
+
+		const pay = $("bd-payments");
+		if (payments.length === 0) pay.replaceChildren(el("p", { class: "muted small" }, b.status === "paid" ? "Marked paid by hand." : "No matching bank transaction yet. It's matched when a statement with the payment is uploaded."));
+		else pay.replaceChildren(
+			el("table", { class: "stack" }, el("tbody", {}, ...payments.map((t) =>
+				el("tr", {},
+					el("td", { class: "nowrap" }, t.date),
+					el("td", {}, t.description),
+					el("td", { class: "num neg" }, `${money(t.amount_cents)} ${b.currency}`),
+					el("td", { class: "wide" }, accountLabel(t.account_code), " → ", accountLabel(t.code || "")),
+					el("td", {}, t.status === "posted" ? el("span", { class: "pill good" }, `Posted #${t.journal_entry_id}`) : el("span", { class: "pill plain" }, "Waiting to be posted")),
+					el("td", {}, t.status !== "posted" ? el("button", { class: "btn", onclick: () => billAction("unmatch") }, "Not this one") : el("a", { href: "#", onclick: (e) => { e.preventDefault(); showTab("review"); openStatement(t.statement_id); } }, "Open statement")),
+				),
+			))),
+		);
+		$("bd-candidates").replaceChildren();
+		if (open && payments.length === 0 && b.amount_cents != null) {
+			api(`/bills/${b.id}/candidates`).then(({ data }) => {
+				if (data.length === 0 || currentBill?.id !== b.id) return;
+				$("bd-candidates").replaceChildren(
+					el("p", { class: "small" }, "Unposted transactions with this amount:"),
+					el("table", { class: "stack" }, el("tbody", {}, ...data.map((t) =>
+						el("tr", {},
+							el("td", { class: "nowrap" }, t.date),
+							el("td", {}, t.description),
+							el("td", { class: "num neg" }, `${money(t.amount_cents)} ${b.currency}`),
+							el("td", {}, accountLabel(t.account_code)),
+							el("td", {}, el("button", { class: "btn", onclick: () => billAction("match", { transaction_id: t.id }) }, "This is the payment")),
+						),
+					))),
+				);
+			}).catch(() => {});
+		}
+
+		const src = [];
+		if (b.source === "email") src.push(`Email from ${b.mail_from}`, b.mail_date ? ` on ${new Date(b.mail_date).toLocaleDateString()}` : "", `: “${b.mail_subject}”`);
+		else src.push("Uploaded or entered by hand");
+		$("bd-source").textContent = src.join("");
+		$("bd-show-doc").classList.toggle("hidden", !b.has_document);
+		$("bd-show-doc").textContent = `Show ${b.document_name || "PDF"}`;
+		$("bd-doc").replaceChildren();
+		$("bd-body").textContent = b.body_text || "";
+		$("bd-body").classList.toggle("hidden", !b.body_text);
+	}
+
+	$("bd-show-doc").onclick = async () => {
+		try {
+			const d = await api(`/bills/${currentBill.id}/document`);
+			const bytes = Uint8Array.from(atob(d.data), (c) => c.charCodeAt(0));
+			const url = URL.createObjectURL(new Blob([bytes], { type: d.type || "application/pdf" }));
+			$("bd-doc").replaceChildren(el("iframe", { class: "pdf", src: url, title: d.name }), el("p", {}, el("a", { href: url, download: d.name || "bill.pdf" }, "Download")));
+		} catch (e) { fail(e); }
+	};
+
+	function billForm() {
+		return {
+			kind: $("bd-kind").value,
+			vendor: $("bd-vendor").value,
+			invoice_number: $("bd-invoice").value,
+			bill_date: $("bd-date").value || null,
+			due_date: $("bd-due").value || null,
+			amount: $("bd-amount").value.trim() || null,
+			currency: $("bd-currency").value,
+			account_code: $("bd-account").value || null,
+		};
+	}
+	function changedFields() {
+		const f = billForm();
+		const b = currentBill;
+		const out = {};
+		const cur = { kind: b.kind, vendor: b.vendor, invoice_number: b.invoice_number, bill_date: b.bill_date, due_date: b.due_date,
+			amount: b.amount_cents == null ? null : (Number(b.amount_cents) / 100).toFixed(2), currency: b.currency, account_code: b.account_code };
+		for (const k of Object.keys(f)) if ((f[k] ?? null) !== (cur[k] ?? null) && !(k === "amount" && f[k] && cur[k] && Number(f[k].replace(/[$,]/g, "")) === Number(cur[k]))) out[k] = f[k];
+		return out;
+	}
+	async function billAction(action, body = {}) {
+		try {
+			let r;
+			if (action === "save") r = await api(`/bills/${currentBill.id}`, { method: "PATCH", body: JSON.stringify(body) });
+			else if (action === "delete") r = await api(`/bills/${currentBill.id}`, { method: "DELETE" });
+			else r = await api(`/bills/${currentBill.id}/${action}`, { method: "POST", body: JSON.stringify(body) });
+			if (action === "delete") { currentBill = null; $("bill-detail").classList.add("hidden"); }
+			await loadBills();
+			if (currentBill) await openBill(currentBill.id);
+			return r;
+		} catch (e) { fail(e); }
+	}
+	$("bd-currency").onchange = () => accountOptions($("bd-account"), accounts.filter((a) => a.currency === $("bd-currency").value), { selected: $("bd-account").value, placeholder: "Choose account…" });
+	$("bd-save").onclick = async () => {
+		const f = changedFields();
+		if (Object.keys(f).length === 0) return toast("Nothing changed.");
+		if (await billAction("save", f)) toast("Saved.");
+	};
+	$("bd-approve").onclick = async () => {
+		const f = changedFields();
+		if (Object.keys(f).length > 0 && !(await billAction("save", f))) return;
+		if (await billAction("approve")) toast("Approved.");
+	};
+	$("bd-unapprove").onclick = () => confirm("Undo the approval? If the bill was posted to payables, that entry is reversed.") && billAction("unapprove");
+	$("bd-paid").onclick = () => confirm("Mark this bill paid without a matching bank transaction?") && billAction("save", { status: "paid" });
+	$("bd-reopen").onclick = () => billAction("save", { status: "new" });
+	$("bd-ignore").onclick = () => billAction("save", { status: "ignored" });
+	$("bd-delete").onclick = () => confirm("Delete this bill?") && billAction("delete");
+
+	// ---------------------------------------------------------------- email settings
+	let mailCfg = null;
+	async function loadMail() {
+		if (accounts.length === 0) await loadAccounts();
+		mailCfg = await api("/mail/settings");
+		const m = mailCfg;
+		$("m-host").value = m.imap_host;
+		$("m-port").value = m.imap_port;
+		$("m-user").value = m.imap_user;
+		$("m-pass").value = "";
+		$("m-pass").disabled = m.imap_password_from_env;
+		$("m-pass").placeholder = m.imap_password_from_env ? "set in ledger.env" : m.imap_password_set ? "•••••••• (stored; type to replace)" : "app password";
+		$("m-clear-pass").classList.toggle("hidden", !m.imap_password_set || m.imap_password_from_env);
+		$("m-pass-note").textContent = m.imap_password_from_env
+			? "The password comes from CATEGORIZER_IMAP_PASSWORD in /etc/ledger/ledger.env."
+			: "A password saved here is stored in the Ledger database (and its backups). To keep it out, set CATEGORIZER_IMAP_PASSWORD=… in /etc/ledger/ledger.env and restart Ledger.";
+		$("m-folder").value = m.imap_folder;
+		$("m-interval").value = m.mail_interval;
+		$("m-lookback").value = m.mail_lookback_days;
+		$("m-keywords").value = m.mail_keywords.join(", ");
+		const sel = $("m-ap");
+		sel.replaceChildren(el("option", { value: "" }, "None: track bills only"));
+		for (const a of accounts.filter((x) => x.type === "liability")) sel.append(el("option", { value: a.code }, `${a.code} · ${a.name} (${a.currency})`));
+		sel.value = m.ap_account;
+		$("m-msg").textContent = mailStatusText(m);
+	}
+	$("mail").onsubmit = async (e) => {
+		e.preventDefault();
+		const body = {
+			imap_host: $("m-host").value,
+			imap_port: Number($("m-port").value) || 993,
+			imap_user: $("m-user").value,
+			imap_folder: $("m-folder").value,
+			mail_interval: Number($("m-interval").value),
+			mail_lookback_days: Number($("m-lookback").value) || 30,
+			mail_keywords: $("m-keywords").value.split(",").map((k) => k.trim()).filter(Boolean),
+			ap_account: $("m-ap").value,
+		};
+		if ($("m-pass").value !== "") body.imap_password = $("m-pass").value;
+		try {
+			await api("/mail/settings", { method: "PUT", body: JSON.stringify(body) });
+			await loadMail();
+			toast("Email settings saved.");
+		} catch (err) { fail(err); }
+	};
+	$("m-test").onclick = async () => {
+		$("m-msg").textContent = "Connecting…";
+		try {
+			const r = await api("/mail/test", { method: "POST" });
+			$("m-msg").textContent = r.ok ? `Works: the folder has ${r.messages} messages.` : `Failed: ${r.error}`;
+		} catch (err) { $("m-msg").textContent = ""; fail(err); }
+	};
+	$("m-clear-pass").onclick = async () => {
+		try { await api("/mail/settings", { method: "PUT", body: JSON.stringify({ imap_password: null }) }); await loadMail(); toast("Stored password removed."); } catch (err) { fail(err); }
 	};
 
 	showTab("review");
