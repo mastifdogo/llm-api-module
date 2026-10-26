@@ -33,7 +33,7 @@ existing data.
 1. Publish a release of this repository. Ledger installs the **latest GitHub Release**:
    bump `version` in `ledger-module.json`, then
    ```sh
-   git tag v0.0.1 && git push origin v0.0.1
+   git tag v0.0.2 && git push origin v0.0.2
    ```
    and create a release from the tag on GitHub (not a draft or pre-release).
 2. In Ledger, open **Settings → Modules**, enter `mastifdogo/llm-api-module` and press **Add**.
@@ -109,17 +109,49 @@ into payables. The card's own statement already records those charges.
 
 ## Bills
 
-**Set up:** *Settings → Email*. Enter the IMAP server, user name and password, a folder (or Gmail
-label), and how often to check (0 turns scheduled checks off; **Check email now** on the Bills tab
-always works).
+**Set up:** *Settings → Email*. Choose where mail comes from, how often to check (0 turns
+scheduled checks off; **Check email now** on the Bills tab always works), and how far back the
+first check looks.
+
+### Gmail (no IMAP)
+
+Gmail no longer accepts your normal password over IMAP. Personal accounts may still work with an
+app password, and Google Workspace accounts generally can't use one for IMAP. So the module reads Gmail
+through a small **Google Apps Script** that runs in your own Google account instead:
+
+1. Choose **Gmail**, press **Show the script** and copy it. It contains a secret token made for
+   your Ledger.
+2. Open [script.google.com](https://script.google.com/home/projects/create), create a project,
+   replace the code with the script, and save.
+3. **Deploy → New deployment → Web app**. Set *Execute as: Me* and *Who has access: Anyone*,
+   deploy, and allow access when Google asks.
+4. Paste the **Web app URL** (it ends in `/exec`) into Ledger, save, and press **Test
+   connection**. It shows the account and how many emails match.
+
+On each check the module asks the script for emails matching a Gmail search, by default
+`newer_than:30d {invoice bill statement "amount due" ...}` from the keywords. Set your own (e.g.
+`label:bills`, with a Gmail filter that labels bills) to keep everything else out. It then
+fetches each new message.
+
+- **Read-only:** the script never changes, labels, moves or deletes mail.
+- **Access:** it answers only requests carrying the token. Google shows a broad "read, compose,
+  send and delete" permission because Apps Script's Gmail service only offers that scope, but
+  the code only reads.
+- **Network:** the Ledger container needs internet access to `script.google.com`.
+- **New token:** **Create a new token** stops the deployed script from working. Paste the new
+  script and use *Deploy → Manage deployments → Edit → New version*.
+- **Workspace accounts:** if an admin has blocked Apps Script, or web apps shared with
+  "Anyone", this connector can't be used.
+
+### IMAP (other providers)
 
 | Provider | Server | Password |
 |---|---|---|
-| Gmail | `imap.gmail.com` | an [app password](https://myaccount.google.com/apppasswords) (needs 2-step verification) |
 | Outlook.com / Microsoft 365 | `outlook.office365.com` | your password, if IMAP and basic sign-in are allowed |
 | iCloud | `imap.mail.me.com` | an app-specific password |
 | Fastmail | `imap.fastmail.com` | an app password |
 | Proton Mail | Proton Bridge, e.g. `127.0.0.1` port `1143` | the Bridge password |
+| Personal Gmail | `imap.gmail.com` | an [app password](https://myaccount.google.com/apppasswords), if your account still offers them (needs 2-Step Verification) |
 
 Implicit TLS on port 993 is used, except for a bridge running on the same machine. The mailbox
 is opened read-only: nothing is marked as read, moved or deleted. To keep the password out of
@@ -127,7 +159,8 @@ the database and its backups, set `CATEGORIZER_IMAP_PASSWORD=...` in `/etc/ledge
 and restart Ledger.
 
 **What happens on each check:**
-1. New messages from the folder are read. The first check goes back 30 days (configurable).
+1. New messages are read (from the IMAP folder, or the Gmail search). The first check goes back
+   30 days (configurable).
    Each message is looked at once.
 2. Only messages containing one of the keywords (invoice, bill, statement, amount due, receipt,
    ...) go to the model. A mail filter that puts bills in their own folder or label keeps
@@ -172,6 +205,7 @@ All routes are under `/api/v1/m/categorizer` and use your Ledger login.
 | `POST` | `/suggest` | `{account_code, transactions: [{date, description, amount, memo?}]}` returns suggestions without storing anything (for scripts or other modules) |
 | `GET`/`DELETE` | `/rules`, `/rules/:key` | learned payee rules |
 | `GET`/`PUT` | `/settings`; `POST /settings/test` | provider settings (the API key is never returned) |
+| `POST` | `/mail/gmail-script` | `{renew?: true}`: the Apps Script for the Gmail connector, with its token (a new token with `renew`) |
 | `GET`/`PUT` | `/mail/settings`; `POST /mail/test`, `POST /mail/check`, `GET /mail/log` | mailbox settings (the password is never returned), a connection test, a check now, the messages looked at |
 | `GET`/`POST` | `/bills?status=unpaid\|new\|open\|paid\|ignored`, `/bills` | list; add by hand `{vendor, amount, due_date, ...}` |
 | `POST` | `/bills/upload` | `{filename, content_base64}`: a PDF or `.eml` |
@@ -212,6 +246,7 @@ lib/llm.mjs            Anthropic / Ollama / OpenAI-compatible clients (built-in 
 lib/bill-routes.mjs    mailbox checks and schedule, bill routes, matching bills to transactions
 lib/bills.mjs          bill extraction prompt, duplicates, match scoring
 lib/imap.mjs           minimal read-only IMAP client
+lib/gmail.mjs          Gmail connector: the Apps Script, its client, the search
 lib/mime.mjs           email (MIME) parser
 lib/dashboard.mjs      notifications and to-dos on Ledger's dashboard
 lib/transfers.mjs      transfer scoring and pairing
