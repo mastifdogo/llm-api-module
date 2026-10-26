@@ -33,7 +33,7 @@ existing data.
 1. Publish a release of this repository. Ledger installs the **latest GitHub Release**:
    bump `version` in `ledger-module.json`, then
    ```sh
-   git tag v1.2.0 && git push origin v1.2.0
+   git tag v0.0.1 && git push origin v0.0.1
    ```
    and create a release from the tag on GitHub (not a draft or pre-release).
 2. In Ledger, open **Settings → Modules**, enter `mastifdogo/llm-api-module` and press **Add**.
@@ -84,6 +84,28 @@ transaction ID (or `categorizer <statement>/<row>`) as the reference.
 
 Money in → debit the statement account. Money out → credit it. So a purchase on a card
 (liability) account credits the card, and a deposit to chequing debits chequing.
+
+## Transfers between your accounts
+
+When money moves between two of your own accounts (chequing to savings, or a bank payment to a
+credit card) and you upload both statements, the transfer shows up twice, once on each. The
+module links the two rows so the transfer is posted **once**:
+
+- **Both statements uploaded:** a payment out of one account and a deposit of the same amount into
+  another account (same currency, at most 4 days apart) are linked as a **Transfer** when one side
+  is booked to the other account, a description says transfer or payment (`TRANSFER`, `TFR`,
+  `PAYMENT`, `VIREMENT`, ...), or a description names the other account ("VISA" for the Visa
+  account). Posting either row creates one entry, and the other row is marked posted with that
+  same entry.
+- **One side already in the journal** (posted from the other statement earlier, or entered by
+  hand): a row whose account has an unclaimed journal entry with the same amount within 4 days,
+  against another bank or card account, shows **Already recorded**. Posting it creates nothing
+  new.
+- **Wrong match:** **Not a transfer** unlinks the rows, asks the model again, and never links that
+  pair again. Booking one side to a different account also drops the link.
+
+If you also get the credit card's statement email as a bill, ignore it rather than approving it
+into payables. The card's own statement already records those charges.
 
 ## Bills
 
@@ -146,6 +168,7 @@ All routes are under `/api/v1/m/categorizer` and use your Ledger login.
 | `DELETE` | `/statements/:id` | discards unposted rows |
 | `PATCH` | `/transactions/:id` | `{account_code?, status?: "new"\|"skipped"}` |
 | `POST` | `/transactions/bulk` | the same for `{ids: [...]}` |
+| `POST` | `/transactions/:id/not-transfer` | unlink a transfer match (both sides get a fresh suggestion) |
 | `POST` | `/suggest` | `{account_code, transactions: [{date, description, amount, memo?}]}` returns suggestions without storing anything (for scripts or other modules) |
 | `GET`/`DELETE` | `/rules`, `/rules/:key` | learned payee rules |
 | `GET`/`PUT` | `/settings`; `POST /settings/test` | provider settings (the API key is never returned) |
@@ -191,6 +214,8 @@ lib/bills.mjs          bill extraction prompt, duplicates, match scoring
 lib/imap.mjs           minimal read-only IMAP client
 lib/mime.mjs           email (MIME) parser
 lib/dashboard.mjs      notifications and to-dos on Ledger's dashboard
+lib/transfers.mjs      transfer scoring and pairing
+lib/transfer-sync.mjs  linking transfer rows (and existing journal entries), the unlink route
 ui/index.html          the page shown in Ledger
 migrations/            the module's tables (schema mod_categorizer)
 test/                  unit tests: npm test (Node 22+)

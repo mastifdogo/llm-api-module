@@ -523,10 +523,15 @@
 				cb.checked = selected.has(t.id);
 				cb.onchange = () => { cb.checked ? selected.add(t.id) : selected.delete(t.id); updateButtons(); };
 				let conf;
-				if (t.status === "posted") conf = el("span", { class: "pill good" }, `Posted #${t.journal_entry_id}`, t.bill_id ? " · bill" : "");
+				if (t.status === "posted") conf = el("span", { class: "pill good" }, `Posted #${t.journal_entry_id}`, t.bill_id ? " · bill" : t.transfer_tx_id || t.transfer_entry_id ? " · transfer" : "");
 				else if (t.status === "skipped") conf = el("span", { class: "pill plain" }, "Skipped");
 				else if (t.chosen_code) conf = el("span", { class: "pill good" }, "Your choice");
 				else if (t.source === "error") conf = el("span", { class: "pill bad" }, "Failed");
+				else if (t.source === "transfer") {
+					const pct = Math.round((t.confidence ?? 0) * 100);
+					conf = el("span", { class: `pill ${t.confidence >= current.review_threshold ? "good" : "warn"}`, title: "One side of a transfer between your accounts" },
+						t.transfer_entry_id ? "Already recorded" : `Transfer ${pct}%`);
+				}
 				else if (t.source === "bill" && t.confidence != null) {
 					const pct = Math.round(t.confidence * 100);
 					conf = el("span", { class: `pill ${t.confidence >= current.review_threshold ? "good" : "warn"}`, title: "Matched to a bill" }, `Bill ${pct}%`);
@@ -542,7 +547,9 @@
 					el("td", { class: "desc wide" }, t.description, t.memo ? el("div", { class: "reason" }, t.memo) : null),
 					el("td", { class: `num ${t.amount_cents < 0 ? "neg" : "pos"}` }, `${money(t.amount_cents)} ${cur}`),
 					el("td", { class: "wide" }, sel, t.chosen_code && t.suggested_code && t.chosen_code !== t.suggested_code ? el("div", { class: "reason" }, `Suggested: ${accountLabel(t.suggested_code)}`) : null),
-					el("td", { class: "wide" }, conf, t.reason && t.status === "new" ? el("div", { class: t.source === "error" ? "err" : "reason" }, t.reason) : null, t.error ? el("div", { class: "err" }, t.error) : null),
+					el("td", { class: "wide" }, conf, t.reason && t.status === "new" ? el("div", { class: t.source === "error" ? "err" : "reason" }, t.reason) : null, t.error ? el("div", { class: "err" }, t.error) : null,
+						open && (t.transfer_tx_id || t.transfer_entry_id) ? el("button", { class: "btn", style: "margin-top:4px", onclick: () => notTransfer(t.id) }, "Not a transfer") : null,
+						t.status === "posted" && t.reason.startsWith("recorded with the transfer") ? el("div", { class: "reason" }, t.reason) : null),
 				);
 			}),
 		);
@@ -566,6 +573,14 @@
 	};
 	$("sel-confident").onclick = () => { for (const t of current.transactions) if (isConfident(t)) selected.add(t.id); renderDetail(); };
 	$("sel-none").onclick = () => { selected = new Set(); renderDetail(); };
+
+	async function notTransfer(id) {
+		try {
+			await api(`/transactions/${id}/not-transfer`, { method: "POST" });
+			toast("Unlinked. Both rows get a fresh suggestion.");
+			await refresh();
+		} catch (e) { fail(e); }
+	}
 
 	async function setAccount(ids, code) {
 		try {
@@ -600,7 +615,8 @@
 		try {
 			const r = await api(`/statements/${current.statement.id}/post`, { method: "POST", body: JSON.stringify({ ids }) });
 			selected = new Set();
-			toast(`Posted ${r.posted} entr${r.posted === 1 ? "y" : "ies"}.` + (r.failed.length ? `\n${r.failed.length} failed: ${r.failed[0].error}` : ""), r.failed.length > 0);
+			const made = r.posted - (r.already_recorded || 0);
+			toast(`Posted ${made} entr${made === 1 ? "y" : "ies"}.` + (r.already_recorded ? ` ${r.already_recorded} already in the journal as transfers.` : "") + (r.failed.length ? `\n${r.failed.length} failed: ${r.failed[0].error}` : ""), r.failed.length > 0);
 			await refresh();
 		} catch (e) { fail(e); updateButtons(); }
 	};
