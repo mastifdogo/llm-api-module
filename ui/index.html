@@ -289,11 +289,43 @@
 	<h2>Email (bills)</h2>
 	<form id="mail" class="panel">
 		<div class="grid">
-			<label>IMAP server <input id="m-host" placeholder="imap.gmail.com" autocomplete="off"></label>
+			<label>Read mail from
+				<select id="m-source">
+					<option value="gmail">Gmail (no IMAP needed)</option>
+					<option value="imap">Another provider (IMAP)</option>
+				</select>
+			</label>
+		</div>
+		<div id="m-gmail" class="hidden" style="margin-top:0.75rem">
+			<p class="small">Gmail is read through a small script that runs in <strong>your own Google account</strong> (Google Apps Script). It only reads: it never changes, moves or deletes mail. Set up once:</p>
+			<ol class="small">
+				<li><button class="btn" type="button" id="m-show-script">Show the script</button> and copy it.</li>
+				<li>Open <a href="https://script.google.com/home/projects/create" target="_blank" rel="noopener">script.google.com → New project</a>, replace all the code with the script, and save.</li>
+				<li><em>Deploy → New deployment → Web app</em>. Set <em>Execute as: Me</em> and <em>Who has access: Anyone</em>, deploy, and allow access when Google asks.</li>
+				<li>Paste the <em>Web app URL</em> (ends in <code>/exec</code>) below, save, and press <em>Test connection</em>.</li>
+			</ol>
+			<div id="m-script-wrap" class="hidden">
+				<textarea id="m-script" rows="10" readonly style="font: 12px ui-monospace, monospace"></textarea>
+				<div class="row" style="margin: 0.4rem 0 0.75rem">
+					<button class="btn" type="button" id="m-copy-script">Copy</button>
+					<button class="btn danger" type="button" id="m-renew">Create a new token</button>
+					<span class="muted small">The script contains a secret token; anyone with the web app URL and the token can read the matching emails.</span>
+				</div>
+			</div>
+			<div class="grid">
+				<label>Web app URL <input id="m-gurl" autocomplete="off" placeholder="https://script.google.com/macros/s/…/exec"></label>
+				<label>Gmail search (optional) <input id="m-gquery" autocomplete="off" placeholder="e.g. label:bills"></label>
+			</div>
+			<p class="muted small" id="m-gquery-note"></p>
+		</div>
+		<div id="m-imap" class="grid" style="margin-top:0.75rem">
+			<label>IMAP server <input id="m-host" placeholder="imap.fastmail.com" autocomplete="off"></label>
 			<label>Port <input id="m-port" type="number" min="1" max="65535" placeholder="993"></label>
 			<label>User name <input id="m-user" autocomplete="off" placeholder="you@example.com"></label>
 			<label>Password <input id="m-pass" type="password" autocomplete="new-password"></label>
-			<label>Folder or label <input id="m-folder" placeholder="INBOX"></label>
+			<label>Folder <input id="m-folder" placeholder="INBOX"></label>
+		</div>
+		<div class="grid" style="margin-top:0.75rem">
 			<label>Check every (minutes, 0 = off) <input id="m-interval" type="number" min="0" max="10080"></label>
 			<label>First check looks back (days) <input id="m-lookback" type="number" min="1" max="365"></label>
 			<label>Accounts payable account <select id="m-ap"></select></label>
@@ -301,13 +333,13 @@
 		<label style="margin-top:0.75rem">Only send emails containing one of these words to the model (comma-separated; empty = every email)
 			<textarea id="m-keywords" rows="2"></textarea>
 		</label>
-		<p class="muted small" id="m-pass-note"></p>
-		<p class="muted small">Gmail and iCloud need an <em>app password</em> (with 2-step verification on); Outlook.com and Microsoft 365 need IMAP enabled. The mailbox is opened read-only, so nothing is marked as read or moved. A dedicated folder or label (e.g. a filter that labels bills) keeps unrelated mail away from the model.</p>
+		<p class="muted small imap-only" id="m-pass-note"></p>
+		<p class="muted small imap-only">iCloud and Fastmail need an <em>app password</em>; Outlook.com and Microsoft 365 need IMAP enabled. The mailbox is opened read-only, so nothing is marked as read or moved. A dedicated folder (e.g. a filter that files bills) keeps unrelated mail away from the model.</p>
 		<p class="muted small">With an accounts payable account, approving a bill posts it there (debit the bill's account, credit payables) and its payment from the bank clears it. Without one, bills are only tracked and the payment is booked straight to the bill's account.</p>
 		<div class="row">
 			<button class="btn primary">Save</button>
 			<button class="btn" type="button" id="m-test">Test connection</button>
-			<button class="btn danger" type="button" id="m-clear-pass">Remove stored password</button>
+			<button class="btn danger imap-only" type="button" id="m-clear-pass">Remove stored password</button>
 			<span id="m-msg" class="muted"></span>
 		</div>
 	</form>
@@ -730,7 +762,7 @@
 	let currentBill = null;
 
 	function mailStatusText(m) {
-		if (!m.imap_host) return "Email not set up";
+		if (!m.configured) return "Email not set up";
 		const st = m.state || {};
 		if (m.running) return "Checking email…";
 		if (!st.last_check_at) return m.mail_interval > 0 ? `Checks every ${m.mail_interval} min` : "Scheduled checks off";
@@ -957,13 +989,18 @@
 		if (accounts.length === 0) await loadAccounts();
 		mailCfg = await api("/mail/settings");
 		const m = mailCfg;
+		$("m-source").value = m.mail_source;
+		showSource();
+		$("m-gurl").value = m.gmail_url;
+		$("m-gquery").value = m.gmail_query;
+		$("m-gquery-note").textContent = `Gmail search used: ${m.effective_gmail_query}. Leave the search empty to use the keywords below; a label (a Gmail filter that labels bills) works best.`;
 		$("m-host").value = m.imap_host;
 		$("m-port").value = m.imap_port;
 		$("m-user").value = m.imap_user;
 		$("m-pass").value = "";
 		$("m-pass").disabled = m.imap_password_from_env;
 		$("m-pass").placeholder = m.imap_password_from_env ? "set in ledger.env" : m.imap_password_set ? "•••••••• (stored; type to replace)" : "app password";
-		$("m-clear-pass").classList.toggle("hidden", !m.imap_password_set || m.imap_password_from_env);
+		$("m-clear-pass").classList.toggle("hidden", !m.imap_password_set || m.imap_password_from_env || m.mail_source !== "imap");
 		$("m-pass-note").textContent = m.imap_password_from_env
 			? "The password comes from CATEGORIZER_IMAP_PASSWORD in /etc/ledger/ledger.env."
 			: "A password saved here is stored in the Ledger database (and its backups). To keep it out, set CATEGORIZER_IMAP_PASSWORD=… in /etc/ledger/ledger.env and restart Ledger.";
@@ -980,6 +1017,9 @@
 	$("mail").onsubmit = async (e) => {
 		e.preventDefault();
 		const body = {
+			mail_source: $("m-source").value,
+			gmail_url: $("m-gurl").value,
+			gmail_query: $("m-gquery").value,
 			imap_host: $("m-host").value,
 			imap_port: Number($("m-port").value) || 993,
 			imap_user: $("m-user").value,
@@ -1000,8 +1040,32 @@
 		$("m-msg").textContent = "Connecting…";
 		try {
 			const r = await api("/mail/test", { method: "POST" });
-			$("m-msg").textContent = r.ok ? `Works: the folder has ${r.messages} messages.` : `Failed: ${r.error}`;
+			$("m-msg").textContent = !r.ok
+				? `Failed: ${r.error}`
+				: r.source === "gmail"
+					? `Works: connected to ${r.account || "Gmail"}; ${r.matching} emails match the search.`
+					: `Works: the folder has ${r.messages} messages, ${r.matching} in the look-back window.`;
 		} catch (err) { $("m-msg").textContent = ""; fail(err); }
+	};
+	function showSource() {
+		const gmail = $("m-source").value === "gmail";
+		$("m-gmail").classList.toggle("hidden", !gmail);
+		$("m-imap").classList.toggle("hidden", gmail);
+		document.querySelectorAll(".imap-only").forEach((n) => n.classList.toggle("hidden", gmail));
+	}
+	$("m-source").onchange = showSource;
+	async function showScript(renew = false) {
+		try {
+			const r = await api("/mail/gmail-script", { method: "POST", body: JSON.stringify({ renew }) });
+			$("m-script").value = r.script;
+			$("m-script-wrap").classList.remove("hidden");
+		} catch (err) { fail(err); }
+	}
+	$("m-show-script").onclick = () => showScript(false);
+	$("m-renew").onclick = () => confirm("Create a new token? The script you deployed stops working until you paste the new one into Apps Script and deploy a new version.") && showScript(true).then(() => toast("New token created: update the script in Apps Script."));
+	$("m-copy-script").onclick = async () => {
+		try { await navigator.clipboard.writeText($("m-script").value); toast("Script copied."); }
+		catch { $("m-script").select(); toast("Press Ctrl+C (⌘C) to copy."); }
 	};
 	$("m-clear-pass").onclick = async () => {
 		try { await api("/mail/settings", { method: "PUT", body: JSON.stringify({ imap_password: null }) }); await loadMail(); toast("Stored password removed."); } catch (err) { fail(err); }
